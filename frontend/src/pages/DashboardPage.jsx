@@ -10,7 +10,7 @@ const getDefaultExportDates = () => {
 };
 
 export default function Dashboard() {
-  const [receipts, setReceipts] = useState([]); // [{id,date,vendor,amount,category,card,job,status}]
+  const [receipts, setReceipts] = useState([]); // [{id,date,vendor,amount,tax,category,card,job,status}]
   const [isDragging, setIsDragging] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [exportDates, setExportDates] = useState(getDefaultExportDates);
@@ -231,6 +231,7 @@ export default function Dashboard() {
                       <Th>Date</Th>
                       <Th>Vendor</Th>
                       <Th>Amount</Th>
+                      <Th>Tax</Th>
                       <Th>Category</Th>
                       <Th>Card</Th>
                       <Th>Job</Th>
@@ -263,6 +264,7 @@ export default function Dashboard() {
                           <Td>{r.date}</Td>
                           <Td>{r.vendor}</Td>
                           <Td>{r.amount && `$${r.amount.toFixed(2)}`}</Td>
+                          <Td>{r.tax}</Td>
                           <Td>{r.category}</Td>
                           <Td>{r.card}</Td>
                           <Td>{r.job}</Td>

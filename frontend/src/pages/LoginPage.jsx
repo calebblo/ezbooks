@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { FcGoogle } from "react-icons/fc";
 import { useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
+
 
 export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -16,14 +18,22 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState(null); 
   const [isError, setIsError] = useState(false);
+  const navigate = useNavigate();
 
   const handleEmailAuth = async (e) => {
     e.preventDefault();
     setMessage(null);
     setIsError(false);
-
+  
     if (isSignUp) {
-      const { error } = await supabase.auth.signUp({ email, password });
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+  
       if (error) {
         setIsError(true);
         setMessage(error.message);
@@ -37,12 +47,22 @@ export default function LoginPage() {
         setMessage(error.message);
       } else {
         setMessage("Login successful!");
+        setTimeout(() => {
+          navigate("/dashboard");
+        }, 800);
       }
     }
   };
+  
 
   const handleGoogleLogin = async () => {
-    await supabase.auth.signInWithOAuth({ provider: "google" });
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback`, 
+      },
+    });
+    if (error) console.error(error.message);
   };
 
   return (
@@ -52,7 +72,6 @@ export default function LoginPage() {
           {isSignUp ? "Create Account" : "Welcome Back"}
         </h1>
 
-        {/* Animated message box */}
         {message && (
           <div
             className={`transition-all mb-4 p-3 rounded-lg text-sm ${
