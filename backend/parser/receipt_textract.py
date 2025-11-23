@@ -15,17 +15,55 @@ s3 = boto3.client("s3", region_name=AWS_REGION)
 # ------------------------------------------
 # 1. Extract ALL text (raw OCR)
 # ------------------------------------------
-# def extract_raw_text_from_textract(bucket: str, key: str) -> str:
-#     response = textract.detect_document_text(
-#         Document={"S3Object": {"Bucket": bucket, "Name": key}}
-#     )
+def extract_raw_text_from_textract_bytes(data: bytes) -> str:
+    """Use Textract on raw image bytes instead of S3Object."""
+    response = textract.detect_document_text(
+        Document={"Bytes": data}
+    )
+    lines = []
+    for block in response.get("Blocks", []):
+        if block.get("BlockType") == "LINE":
+            lines.append(block.get("Text", ""))
+    return "\n".join(lines)
 
-#     lines = []
-#     for block in response.get("Blocks", []):
-#         if block.get("BlockType") == "LINE":
-#             lines.append(block.get("Text", ""))
 
-#     return "\n".join(lines)
+def extract_structured_fields_bytes(data: bytes):
+    """Use AnalyzeExpense on raw image bytes."""
+    response = textract.analyze_expense(
+        Document={"Bytes": data}
+    )
+
+    vendor = None
+    total_amount = None
+    date = None
+    tax_amount = None
+
+    for doc in response.get("ExpenseDocuments", []):
+        for field in doc.get("SummaryFields", []):
+            field_type = field.get("Type", {}).get("Text", "")
+            value = field.get("ValueDetection", {}).get("Text", "")
+
+            t = field_type.upper()
+
+            if t == "VENDOR_NAME":
+                vendor = value
+            elif t == "TOTAL":
+                total_amount = value
+            elif t in ("INVOICE_RECEIPT_DATE", "INVOICE_DATE"):
+                date = value
+            elif t in ("TAX", "TOTAL_TAX") and value:
+                # Textract sometimes gives total tax directly
+                try:
+                    tax_amount = float(value)
+                except ValueError:
+                    pass
+
+    return {
+        "vendor": vendor,
+        "amount": total_amount,
+        "date": date,
+        "taxAmount": tax_amount
+    }
 
 
 # ------------------------------------------
@@ -58,45 +96,7 @@ s3 = boto3.client("s3", region_name=AWS_REGION)
 #         "date": date,
 #     }
 
-def extract_raw_text_from_textract_bytes(data: bytes) -> str:
-    """Use Textract on raw image bytes instead of S3Object."""
-    response = textract.detect_document_text(
-        Document={"Bytes": data}
-    )
-    lines = []
-    for block in response.get("Blocks", []):
-        if block.get("BlockType") == "LINE":
-            lines.append(block.get("Text", ""))
-    return "\n".join(lines)
 
-
-def extract_structured_fields_bytes(data: bytes):
-    """Use AnalyzeExpense on raw image bytes."""
-    response = textract.analyze_expense(
-        Document={"Bytes": data}
-    )
-
-    vendor = None
-    total_amount = None
-    date = None
-
-    for doc in response.get("ExpenseDocuments", []):
-        for field in doc.get("SummaryFields", []):
-            field_type = field.get("Type", {}).get("Text", "")
-            value = field.get("ValueDetection", {}).get("Text", "")
-
-            if field_type == "VENDOR_NAME":
-                vendor = value
-            elif field_type == "TOTAL":
-                total_amount = value
-            elif field_type in ("INVOICE_RECEIPT_DATE", "INVOICE_DATE"):
-                date = value
-
-    return {
-        "vendor": vendor,
-        "amount": total_amount,
-        "date": date,
-    }
 
 
 def parse_receipt_from_bytes(data: bytes):
@@ -107,6 +107,7 @@ def parse_receipt_from_bytes(data: bytes):
     vendor = fields.get("vendor") or extract_vendor(raw_text)
     amount = fields.get("amount") or extract_amount(raw_text)
     date = fields.get("date") or extract_date(raw_text)
+    tax_amount = extract_tax_amount(raw_text)
     card_last4 = extract_card_last4(raw_text)
 
     vendor_suggestion = match_vendor(vendor)
@@ -116,6 +117,7 @@ def parse_receipt_from_bytes(data: bytes):
         "rawText": raw_text,
         "vendorText": vendor,
         "amount": amount,
+        "taxAmount": tax_amount,
         "date": date,
         "cardLast4": card_last4,
         "vendorSuggestion": vendor_suggestion,
@@ -165,31 +167,59 @@ def extract_card_last4(raw_text: str) -> Optional[str]:
         return match.group(1)
     return None
 
+def extract_tax_amount(raw_text: str) -> Optional[float]:
+    """
+    Try to find tax amounts like:
+      - 'SALES TAX 0.61'
+      - 'HST 0.91'
+      - 'Tax 0.78'
+      - 'GST (5%)\\n14.35' / 'PST (7%)\\n20.09'
+    Returns the SUM of all tax lines if any are found.
+    """
+    lines = raw_text.splitlines()
+    tokens = ("TAX", "GST", "HST", "PST")
+    amounts: list[float] = []
+
+    for i, line in enumerate(lines):
+        upper = line.upper()
+        if any(tok in upper for tok in tokens):
+            # look for numbers on this line AND the next line (for GST\n14.35 style)
+            candidates = [line]
+            if i + 1 < len(lines):
+                candidates.append(lines[i + 1])
+
+            for text in candidates:
+                for m in re.findall(r"\d+\.\d{2}", text):
+                    try:
+                        amounts.append(float(m))
+                    except ValueError:
+                        pass
+
+    if not amounts:
+        return None
+
+    # sum GST+PST, or single TAX, etc.
+    return round(sum(amounts), 2)
+
+
 
 # ------------------------------------------
 # 4. MAIN PUBLIC FUNCTION
 # ------------------------------------------
 def parse_receipt_from_s3(bucket: str, key: str) -> Dict[str, Optional[Any]]:
-    raw_text = extract_raw_text_from_textract(bucket, key)
-    fields = extract_structured_fields(bucket, key)
+    """
+    Public function used by the FastAPI /ocr endpoint.
 
-    vendor = fields.get("vendor") or extract_vendor(raw_text)
-    amount = fields.get("amount") or extract_amount(raw_text)
-    date = fields.get("date") or extract_date(raw_text)
-    card_last4 = extract_card_last4(raw_text)
+    It:
+      1. Downloads the file from S3
+      2. Feeds raw bytes into parse_receipt_from_bytes
+      3. Returns the same dict structure (including taxAmount)
+    """
+    obj = s3.get_object(Bucket=bucket, Key=key)
+    data: bytes = obj["Body"].read()
 
-    vendor_suggestion = match_vendor(vendor)
-    card_match = match_card(card_last4)
+    return parse_receipt_from_bytes(data)
 
-    return {
-        "rawText": raw_text,
-        "vendorText": vendor,
-        "amount": amount,
-        "date": date,
-        "cardLast4": card_last4,
-        "vendorSuggestion": vendor_suggestion,
-        "cardMatch": card_match,
-    }
 
 
 

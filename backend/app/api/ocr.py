@@ -14,6 +14,7 @@ class OcrResult(BaseModel):
     rawText: str
     vendorText: Optional[str]
     amount: Optional[float]
+    taxAmount: Optional[float]
     date: Optional[str]
     cardLast4: Optional[str]
     vendorSuggestion: Optional[Any]

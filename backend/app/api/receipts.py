@@ -77,6 +77,7 @@ async def upload_receipt(
         raw_text = ocr_result.get("rawText")
         parsed_amount = ocr_result.get("amount")
         parsed_date = ocr_result.get("date")
+        parsed_tax = ocr_result.get("taxAmount")
         vendor_suggestion = ocr_result.get("vendorSuggestion")
         card_match = ocr_result.get("cardMatch")
     except ClientError as e:
@@ -113,12 +114,14 @@ async def upload_receipt(
     else:
         amount_decimal = None
 
-    # Tax – from form only (we’re not parsing per-tax yet)
-    tax_decimal = (
-        Decimal(taxAmount)
-        if taxAmount not in (None, "", "null")
-        else None
-    )
+        # Tax – form overrides OCR; OCR used as fallback
+    if taxAmount not in (None, "", "null"):
+        tax_decimal = Decimal(taxAmount)
+    elif parsed_tax is not None:
+        tax_decimal = Decimal(str(parsed_tax))
+    else:
+        tax_decimal = None
+
 
     # Date
     if date not in (None, "", "null"):
