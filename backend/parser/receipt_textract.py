@@ -1,6 +1,8 @@
 from typing import Optional, Dict, Any
 import boto3
 import re
+import os
+from .vendor_card_matcher import match_vendor, match_card
 
 textract = boto3.client("textract")
 s3 = boto3.client("s3")
@@ -107,10 +109,67 @@ def parse_receipt_from_s3(bucket: str, key: str) -> Dict[str, Optional[Any]]:
     date = fields.get("date") or extract_date(raw_text)
     card_last4 = extract_card_last4(raw_text)
 
+    vendor_suggestion = match_vendor(vendor)
+    card_match = match_card(card_last4)
+
     return {
         "rawText": raw_text,
         "vendorText": vendor,
         "amount": amount,
         "date": date,
         "cardLast4": card_last4,
+        "vendorSuggestion": vendor_suggestion,
+        "cardMatch": card_match,
     }
+
+
+
+dynamodb = boto3.resource("dynamodb")
+VENDORS_TABLE = os.environ.get("VENDORS_TABLE", "Vendors")
+CARDS_TABLE = "Cards"
+
+def get_vendor_suggestion(user_id: str, vendor_text : str) -> Optional[Dict[str, Any]]:
+    if not vendor_text:
+        return None
+
+    normalized = vendor_text.lower().strip()
+
+    resp = dynamodb.query(
+        TableName = VENDORS_TABLE,
+        KeyConditionExpression = "userId = :u",
+        ExpressionAttributeValues = {":u": {"S" : user_id}}
+    )
+
+    vendors = resp.get("Items", [])
+    if not vendors:
+        return None
+
+    best = None
+    best_score = 0
+
+    for v in vendors:
+        name = v["name"]["S"].lower()
+
+        if normalized == name:
+            score = 3
+        elif normalized in name:
+            score = 2
+        elif normalized[:5] in name:
+            score = 1
+        else:
+            continue
+
+        if score > best_score:
+            best = v
+            best_score = score
+
+
+    if not best:
+        return None
+
+    return {
+        "vendorId": best["vendorId"]["S"],
+        "name": best["name"]["S"],
+        "category": best.get("category", {}).get("S")
+    }
+
