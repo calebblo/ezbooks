@@ -12,7 +12,6 @@ export default function LoginPage() {
   const [searchParams] = useSearchParams();
   const startInSignUp = searchParams?.get("signup") === "true";
   const [isSignUp, setIsSignUp] = useState(startInSignUp);
-  // const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState(null); 
