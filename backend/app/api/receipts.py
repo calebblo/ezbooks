@@ -41,7 +41,14 @@ def list_receipts():
         KeyConditionExpression="userId = :uid",
         ExpressionAttributeValues={":uid": DEMO_USER_ID},
     )
-    return resp.get("Items", [])
+    items = resp.get("Items", [])
+
+    # For response: surface vendor name in the vendorId field if available
+    normalized = []
+    for item in items:
+        vendor_name = item.get("vendorName") or item.get("vendorId")
+        normalized.append({**item, "vendorId": vendor_name, "vendorName": None})
+    return normalized
 
 
 @router.post("/", response_model=ReceiptOut)
@@ -132,6 +139,13 @@ async def upload_receipt(
     # Card – you could use card_match here if you wire it to cardId
     cardId_value = cardId
 
+    # Vendor name for display (prefer matched name, then OCR text)
+    vendor_name_value = None
+    if vendor_suggestion and vendor_suggestion.get("name"):
+        vendor_name_value = vendor_suggestion.get("name")
+    elif raw_text:
+        # basic fallback from OCR: first line
+        vendor_name_value = raw_text.split("\n")[0].strip() or None
     # 4) Build item for DynamoDB
     item = {
         "userId": DEMO_USER_ID,
@@ -151,4 +165,9 @@ async def upload_receipt(
     }
 
     table_receipts.put_item(Item=item)
-    return item
+    print(
+        f"Uploaded receipt {receipt_id} with vendorId: {vendorId_value or '(none)'}"
+        f" | vendorName: {vendor_name_value or '(unknown)'}"
+    )
+    # Response: vendorId field returns the vendor name for client display (no separate vendorName key)
+    return {**item, "vendorId": vendor_name_value or vendorId_value, "vendorName": None}
