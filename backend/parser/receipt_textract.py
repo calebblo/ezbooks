@@ -3,9 +3,13 @@ import boto3
 import re
 import os
 from .vendor_card_matcher import match_vendor, match_card
+from app.core import config
 
-textract = boto3.client("textract")
-s3 = boto3.client("s3")
+AWS_REGION = config.AWS_REGION
+S3_BUCKET_RECEIPTS = config.S3_BUCKET_RECEIPTS
+
+textract = boto3.client("textract", region_name=AWS_REGION)
+s3 = boto3.client("s3", region_name=AWS_REGION)
 
 
 # ------------------------------------------
@@ -124,9 +128,9 @@ def parse_receipt_from_s3(bucket: str, key: str) -> Dict[str, Optional[Any]]:
 
 
 
-dynamodb = boto3.resource("dynamodb")
-VENDORS_TABLE = os.environ.get("VENDORS_TABLE", "Vendors")
-CARDS_TABLE = "Cards"
+# dynamodb = boto3.resource("dynamodb")
+# VENDORS_TABLE = os.environ.get("VENDORS_TABLE", "Vendors")
+# CARDS_TABLE = "Cards"
 
 def get_vendor_suggestion(user_id: str, vendor_text : str) -> Optional[Dict[str, Any]]:
     if not vendor_text:

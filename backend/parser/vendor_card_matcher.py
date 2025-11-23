@@ -3,12 +3,18 @@ from typing import Optional, Dict, Any
 from boto3.dynamodb.conditions import Key, Attr
 import os
 
-# Initialize DynamoDB resource
-dynamodb = boto3.resource('dynamodb')
+from app.core import config
+
+AWS_REGION = config.AWS_REGION
 
 # Table names (can be overridden by env vars if needed, defaulting to user specs)
-VENDORS_TABLE_NAME = os.environ.get("VENDORS_TABLE", "Vendors")
-CARDS_TABLE_NAME = os.environ.get("CARDS_TABLE", "Cards")
+VENDORS_TABLE_NAME = config.DDB_TABLE_VENDORS
+CARDS_TABLE_NAME = config.DDB_TABLE_CARDS
+
+# Initialize DynamoDB resource
+dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
+
+
 
 def match_vendor(vendor_text: str) -> Optional[Dict[str, Any]]:
     """

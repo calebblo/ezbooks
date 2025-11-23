@@ -4,6 +4,7 @@ from fastapi import APIRouter, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import List, Optional
 from uuid import uuid4
+from decimal import Decimal
 
 from app.core.aws import table_receipts, s3_client
 from app.core import config
@@ -46,8 +47,8 @@ async def upload_receipt(
     vendorId: Optional[str] = Form(None),
     jobId: Optional[str] = Form(None),
     category: Optional[str] = Form(None),
-    amount: Optional[float] = Form(None),
-    taxAmount: Optional[float] = Form(None),
+    amount: Optional[str] = Form(None),
+    taxAmount: Optional[str] = Form(None),
     cardId: Optional[str] = Form(None),
     date: Optional[str] = Form(None),  # ISO string or whatever your frontend uses
 ):
@@ -81,8 +82,8 @@ async def upload_receipt(
         "vendorId": vendorId,
         "jobId": jobId,
         "category": category,
-        "amount": amount,
-        "taxAmount": taxAmount,
+        "amount": Decimal(str(amount)) if amount is not None else None,
+        "taxAmount": Decimal(str(taxAmount)) if taxAmount is not None else None,
         "cardId": cardId,
         "date": date,
 
