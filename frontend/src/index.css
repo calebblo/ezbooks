@@ -2,4 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-
+/* TEMP: debug background so we know Tailwind is working */
+body {
+  background: #f5f4f7;
+}
