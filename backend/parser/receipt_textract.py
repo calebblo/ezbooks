@@ -27,6 +27,12 @@ def extract_raw_text_from_textract_bytes(data: bytes) -> str:
     return "\n".join(lines)
 
 
+
+
+
+# ------------------------------------------
+# 2. Extract Vendor, Total, Date using AnalyzeExpense
+# ------------------------------------------
 def extract_structured_fields_bytes(data: bytes):
     """Use AnalyzeExpense on raw image bytes."""
     response = textract.analyze_expense(
@@ -48,7 +54,8 @@ def extract_structured_fields_bytes(data: bytes):
             if t == "VENDOR_NAME":
                 vendor = value
             elif t == "TOTAL":
-                total_amount = value
+                m = re.search(r"\d+\.\d{2}", value.replace(",", ""))
+                total_amount = m.group(0) if m else value
             elif t in ("INVOICE_RECEIPT_DATE", "INVOICE_DATE"):
                 date = value
             elif t in ("TAX", "TOTAL_TAX") and value:
@@ -64,37 +71,6 @@ def extract_structured_fields_bytes(data: bytes):
         "date": date,
         "taxAmount": tax_amount
     }
-
-
-# ------------------------------------------
-# 2. Extract Vendor, Total, Date using AnalyzeExpense
-# ------------------------------------------
-# def extract_structured_fields(bucket: str, key: str) -> Dict[str, Optional[str]]:
-#     response = textract.analyze_expense(
-#         Document={"S3Object": {"Bucket": bucket, "Name": key}}
-#     )
-
-#     vendor = None
-#     total_amount = None
-#     date = None
-
-#     for doc in response.get("ExpenseDocuments", []):
-#         for field in doc.get("SummaryFields", []):
-#             field_type = field.get("Type", {}).get("Text", "")
-#             value = field.get("ValueDetection", {}).get("Text", "")
-
-#             if field_type == "VENDOR_NAME":
-#                 vendor = value
-#             elif field_type == "TOTAL":
-#                 total_amount = value
-#             elif field_type in ("INVOICE_RECEIPT_DATE", "INVOICE_DATE"):
-#                 date = value
-
-#     return {
-#         "vendor": vendor,
-#         "amount": total_amount,
-#         "date": date,
-#     }
 
 
 
