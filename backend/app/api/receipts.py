@@ -22,6 +22,7 @@ class ReceiptOut(BaseModel):
     userId: str
 
     vendorId: Optional[str] = None
+    vendorText: Optional[str] = None  # !!!!!! include detected vendor text
     jobId: Optional[str] = None
     category: Optional[str] = None
     amount: Optional[float] = None
@@ -67,17 +68,23 @@ async def upload_receipt(
 
     # 1) Run OCR on the bytes (Textract + match_vendor/match_card)
     raw_text = None
+    vendor_text = None  # !!!!!! capture vendor text from OCR
     parsed_amount = None
     parsed_date = None
     vendor_suggestion = None
     card_match = None
 
     try:
-        ocr_result = parse_receipt_from_bytes(file_bytes)
+        ocr_result = parse_receipt_from_bytes(
+            file_bytes,
+            file.content_type,
+            file.filename,
+        )  # !!!!!! pass file bytes + content type + filename to AI
         raw_text = ocr_result.get("rawText")
         parsed_amount = ocr_result.get("amount")
         parsed_date = ocr_result.get("date")
         parsed_tax = ocr_result.get("taxAmount")
+        vendor_text = ocr_result.get("vendorText")
         vendor_suggestion = ocr_result.get("vendorSuggestion")
         card_match = ocr_result.get("cardMatch")
     except ClientError as e:
@@ -138,6 +145,7 @@ async def upload_receipt(
         "receiptId": receipt_id,
 
         "vendorId": vendorId_value,
+        "vendorText": vendor_text,  # !!!!!! store detected vendor text
         "jobId": jobId,
         "category": category_value,
         "amount": amount_decimal,

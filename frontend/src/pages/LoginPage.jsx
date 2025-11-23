@@ -3,10 +3,13 @@ import { createClient } from "@supabase/supabase-js";
 import { FcGoogle } from "react-icons/fc";
 import { useSearchParams } from "react-router-dom";
 
-export const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-);
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+
+export const supabase = supabaseConfigured
+  ? createClient(supabaseUrl, supabaseAnonKey)
+  : null; // run setup requires VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
 
 export default function LoginPage() {
   const [searchParams] = useSearchParams();
@@ -21,6 +24,12 @@ export default function LoginPage() {
     e.preventDefault();
     setMessage(null);
     setIsError(false);
+
+    if (!supabase) {
+      setIsError(true);
+      setMessage("Supabase is not configured. Add env vars and restart dev server.");
+      return;
+    }
 
     if (isSignUp) {
       const { error } = await supabase.auth.signUp({ email, password });
@@ -42,6 +51,11 @@ export default function LoginPage() {
   };
 
   const handleGoogleLogin = async () => {
+    if (!supabase) {
+      setIsError(true);
+      setMessage("Supabase is not configured. Add env vars and restart dev server.");
+      return;
+    }
     await supabase.auth.signInWithOAuth({ provider: "google" });
   };
 
@@ -53,15 +67,16 @@ export default function LoginPage() {
         </h1>
 
         {/* Animated message box */}
-        {message && (
+        {(message || !supabaseConfigured) && (
           <div
             className={`transition-all mb-4 p-3 rounded-lg text-sm ${
-              isError
+              isError || !supabaseConfigured
                 ? "bg-red-500/20 text-red-300 border border-red-500/30"
                 : "bg-green-500/20 text-green-300 border border-green-500/30"
             }`}
           >
-            {message}
+            {message ||
+              "Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env.local and restart."}
           </div>
         )}
 
@@ -115,4 +130,3 @@ export default function LoginPage() {
     </div>
   );
 }
-
