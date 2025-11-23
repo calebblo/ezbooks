@@ -137,3 +137,25 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# --- Python / FastAPI backend ignores ---
+
+# Virtual environment
+backend/.venv/
+backend/venv/
+backend/env/
+
+# Python cache files
+backend/__pycache__/
+backend/**/*.pyc
+backend/**/*.pyo
+
+# Backend environment variables
+backend/.env
+
+# Local AWS credentials (never commit these)
+.aws/
+
+# Uvicorn logs
+backend/*.log
+
