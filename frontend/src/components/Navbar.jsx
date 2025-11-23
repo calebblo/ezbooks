@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
+import { Link, useNavigate } from "react-router-dom";
 
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
@@ -31,7 +32,7 @@ export default function Navbar() {
         <div className="flex items-center gap-2">
           <div className="h-7 w-7 rounded-xl bg-gradient-to-br from-purple-400 to-sky-400 shadow-lg shadow-purple-500/40" />
           <span className="text-sm md:text-base font-semibold tracking-tight">
-            ReceiptAI
+            EzBooks
           </span>
         </div>
 
@@ -42,12 +43,15 @@ export default function Navbar() {
           <a href="#pricing" className="hover:text-white transition">
             Pricing
           </a>
-          <a href="#login" className="hover:text-white transition">
+          <Link to="/login" className="hover:text-white transition">
             Login
-          </a>
-          <button className="ml-2 rounded-full bg-white text-black px-4 py-1.5 text-xs font-medium hover:scale-[1.03] active:scale-[0.97] transition-transform">
+          </Link>
+          <Link
+            to="/login?signup=true"
+            className="ml-2 rounded-full bg-white text-black px-4 py-1.5 text-xs font-medium hover:scale-[1.03] active:scale-[0.97] transition-transform"
+          >
             Get started
-          </button>
+          </Link>
         </div>
 
         {/* Mobile dot / menu placeholder */}

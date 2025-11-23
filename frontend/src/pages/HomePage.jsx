@@ -4,7 +4,6 @@ import Navbar from "../components/Navbar.jsx";
 import ScrollShowcase from "../components/ScrollShowcase.jsx";
 import ScrollProgress from "../components/ScrollProgress.jsx";
 
-
 const fadeUp = {
   hidden: { opacity: 0, y: 40 },
   visible: (delay = 0) => ({
@@ -346,7 +345,7 @@ export default function HomePage() {
                 Most Popular
               </span>
               <h3 className="text-lg font-semibold mt-3 mb-2">Pro</h3>
-              <p className="text-4xl font-bold my-4">$19</p>
+              <p className="text-4xl font-bold my-4">$9.99</p>
               <p className="text-sm text-white/90 mb-4">
                 For growing teams that live in their expense reports.
               </p>
@@ -402,7 +401,7 @@ export default function HomePage() {
 
       {/* ===== FOOTER ===== */}
       <footer className="py-10 bg-[#020617] border-t border-white/10 text-center text-gray-500 text-xs">
-        © {new Date().getFullYear()} ReceiptAI — All rights reserved.
+        © {new Date().getFullYear()} EzBooks — All rights reserved.
       </footer>
     </main>
   );
