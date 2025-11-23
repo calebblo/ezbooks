@@ -5,9 +5,12 @@ from pydantic import BaseModel
 from typing import List, Optional
 from uuid import uuid4
 from decimal import Decimal
+import io
 
 from app.core.aws import table_receipts, s3_client
 from app.core import config
+from parser.receipt_textract import parse_receipt_from_bytes
+from botocore.exceptions import ClientError
 
 router = APIRouter(prefix="/receipts", tags=["receipts"])
 
@@ -44,52 +47,104 @@ def list_receipts():
 @router.post("/", response_model=ReceiptOut)
 async def upload_receipt(
     file: UploadFile = File(...),
-    vendorId: Optional[str] = Form(None),
-    jobId: Optional[str] = Form(None),
-    category: Optional[str] = Form(None),
-    amount: Optional[str] = Form(None),
-    taxAmount: Optional[str] = Form(None),
-    cardId: Optional[str] = Form(None),
-    date: Optional[str] = Form(None),  # ISO string or whatever your frontend uses
+    vendorId: Optional[str] = Form(default=None),
+    jobId: Optional[str] = Form(default=None),
+    category: Optional[str] = Form(default=None),
+    amount: Optional[str] = Form(default=None),
+    taxAmount: Optional[str] = Form(default=None),
+    cardId: Optional[str] = Form(default=None),
+    date: Optional[str] = Form(default=None),
 ):
     """
-    Upload a receipt image to S3 and create a DynamoDB entry.
-
-    Frontend sends multipart/form-data with:
-      - file: the image
-      - optional vendorId, jobId, category, amount, taxAmount, cardId, date
+    Upload a receipt image, run OCR with Textract (Bytes API),
+    upload the image to S3, and create a DynamoDB entry.
     """
+
+    # 0) Read the file ONCE into memory and never touch file.file again
+    file_bytes = await file.read()
+
     receipt_id = str(uuid4())
 
-    # S3 object key, grouped by user
+    # 1) Run OCR on the bytes (Textract + match_vendor/match_card)
+    raw_text = None
+    parsed_amount = None
+    parsed_date = None
+    vendor_suggestion = None
+    card_match = None
+
+    try:
+        ocr_result = parse_receipt_from_bytes(file_bytes)
+        raw_text = ocr_result.get("rawText")
+        parsed_amount = ocr_result.get("amount")
+        parsed_date = ocr_result.get("date")
+        vendor_suggestion = ocr_result.get("vendorSuggestion")
+        card_match = ocr_result.get("cardMatch")
+    except ClientError as e:
+        # If Textract fails, we still want the upload to succeed
+        print("Textract error, skipping OCR:", e)
+
+    # 2) Upload the same bytes to S3
     s3_key = f"{DEMO_USER_ID}/receipts/{receipt_id}-{file.filename}"
 
-    # Upload to S3
     s3_client.upload_fileobj(
-        file.file,
+        io.BytesIO(file_bytes),
         config.S3_BUCKET_RECEIPTS,
         s3_key,
         ExtraArgs={"ContentType": file.content_type or "application/octet-stream"},
     )
 
-    # You can decide what you want to store as "imageUrl"
     image_url = f"s3://{config.S3_BUCKET_RECEIPTS}/{s3_key}"
 
+    # 3) Use OCR values as defaults, but let form override them
+
+    # Vendor + category
+    if (vendorId is None or vendorId == "") and vendor_suggestion:
+        vendorId_value = vendor_suggestion.get("vendorId")
+        category_value = category or vendor_suggestion.get("category")
+    else:
+        vendorId_value = vendorId
+        category_value = category
+
+    # Amount: form string takes priority; otherwise OCR; otherwise None
+    if amount not in (None, "", "null"):
+        amount_decimal = Decimal(amount)
+    elif parsed_amount is not None:
+        amount_decimal = Decimal(str(parsed_amount))
+    else:
+        amount_decimal = None
+
+    # Tax – from form only (we’re not parsing per-tax yet)
+    tax_decimal = (
+        Decimal(taxAmount)
+        if taxAmount not in (None, "", "null")
+        else None
+    )
+
+    # Date
+    if date not in (None, "", "null"):
+        date_value = date
+    else:
+        date_value = parsed_date
+
+    # Card – you could use card_match here if you wire it to cardId
+    cardId_value = cardId
+
+    # 4) Build item for DynamoDB
     item = {
         "userId": DEMO_USER_ID,
         "receiptId": receipt_id,
 
-        "vendorId": vendorId,
+        "vendorId": vendorId_value,
         "jobId": jobId,
-        "category": category,
-        "amount": Decimal(str(amount)) if amount is not None else None,
-        "taxAmount": Decimal(str(taxAmount)) if taxAmount is not None else None,
-        "cardId": cardId,
-        "date": date,
+        "category": category_value,
+        "amount": amount_decimal,
+        "taxAmount": tax_decimal,
+        "cardId": cardId_value,
+        "date": date_value,
 
         "imageUrl": image_url,
-        "rawText": None,          # OCR can fill this later
-        "status": "UPLOADED",     # simple status flag for your OCR pipeline
+        "rawText": raw_text,
+        "status": "OCR_PARSED" if raw_text else "UPLOADED",
     }
 
     table_receipts.put_item(Item=item)

@@ -15,25 +15,65 @@ s3 = boto3.client("s3", region_name=AWS_REGION)
 # ------------------------------------------
 # 1. Extract ALL text (raw OCR)
 # ------------------------------------------
-def extract_raw_text_from_textract(bucket: str, key: str) -> str:
-    response = textract.detect_document_text(
-        Document={"S3Object": {"Bucket": bucket, "Name": key}}
-    )
+# def extract_raw_text_from_textract(bucket: str, key: str) -> str:
+#     response = textract.detect_document_text(
+#         Document={"S3Object": {"Bucket": bucket, "Name": key}}
+#     )
 
-    lines = []
-    for block in response.get("Blocks", []):
-        if block.get("BlockType") == "LINE":
-            lines.append(block.get("Text", ""))
+#     lines = []
+#     for block in response.get("Blocks", []):
+#         if block.get("BlockType") == "LINE":
+#             lines.append(block.get("Text", ""))
 
-    return "\n".join(lines)
+#     return "\n".join(lines)
 
 
 # ------------------------------------------
 # 2. Extract Vendor, Total, Date using AnalyzeExpense
 # ------------------------------------------
-def extract_structured_fields(bucket: str, key: str) -> Dict[str, Optional[str]]:
+# def extract_structured_fields(bucket: str, key: str) -> Dict[str, Optional[str]]:
+#     response = textract.analyze_expense(
+#         Document={"S3Object": {"Bucket": bucket, "Name": key}}
+#     )
+
+#     vendor = None
+#     total_amount = None
+#     date = None
+
+#     for doc in response.get("ExpenseDocuments", []):
+#         for field in doc.get("SummaryFields", []):
+#             field_type = field.get("Type", {}).get("Text", "")
+#             value = field.get("ValueDetection", {}).get("Text", "")
+
+#             if field_type == "VENDOR_NAME":
+#                 vendor = value
+#             elif field_type == "TOTAL":
+#                 total_amount = value
+#             elif field_type in ("INVOICE_RECEIPT_DATE", "INVOICE_DATE"):
+#                 date = value
+
+#     return {
+#         "vendor": vendor,
+#         "amount": total_amount,
+#         "date": date,
+#     }
+
+def extract_raw_text_from_textract_bytes(data: bytes) -> str:
+    """Use Textract on raw image bytes instead of S3Object."""
+    response = textract.detect_document_text(
+        Document={"Bytes": data}
+    )
+    lines = []
+    for block in response.get("Blocks", []):
+        if block.get("BlockType") == "LINE":
+            lines.append(block.get("Text", ""))
+    return "\n".join(lines)
+
+
+def extract_structured_fields_bytes(data: bytes):
+    """Use AnalyzeExpense on raw image bytes."""
     response = textract.analyze_expense(
-        Document={"S3Object": {"Bucket": bucket, "Name": key}}
+        Document={"Bytes": data}
     )
 
     vendor = None
@@ -57,6 +97,31 @@ def extract_structured_fields(bucket: str, key: str) -> Dict[str, Optional[str]]
         "amount": total_amount,
         "date": date,
     }
+
+
+def parse_receipt_from_bytes(data: bytes):
+    """Main OCR entry point using BYTE DATA only."""
+    raw_text = extract_raw_text_from_textract_bytes(data)
+    fields = extract_structured_fields_bytes(data)
+
+    vendor = fields.get("vendor") or extract_vendor(raw_text)
+    amount = fields.get("amount") or extract_amount(raw_text)
+    date = fields.get("date") or extract_date(raw_text)
+    card_last4 = extract_card_last4(raw_text)
+
+    vendor_suggestion = match_vendor(vendor)
+    card_match = match_card(card_last4)
+
+    return {
+        "rawText": raw_text,
+        "vendorText": vendor,
+        "amount": amount,
+        "date": date,
+        "cardLast4": card_last4,
+        "vendorSuggestion": vendor_suggestion,
+        "cardMatch": card_match,
+    }
+
 
 
 # ------------------------------------------
