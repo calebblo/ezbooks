@@ -67,6 +67,7 @@ async def upload_receipt(
 
     # 1) Run OCR on the bytes (Textract + match_vendor/match_card)
     raw_text = None
+    vendor_text = None  # internal use; not persisted
     parsed_amount = None
     parsed_date = None
     vendor_suggestion = None
@@ -75,6 +76,7 @@ async def upload_receipt(
     try:
         ocr_result = parse_receipt_from_bytes(file_bytes)
         raw_text = ocr_result.get("rawText")
+        vendor_text = ocr_result.get("vendorText")
         parsed_amount = ocr_result.get("amount")
         parsed_date = ocr_result.get("date")
         parsed_tax = ocr_result.get("taxAmount")
@@ -100,10 +102,12 @@ async def upload_receipt(
 
     # Vendor + category
     if (vendorId is None or vendorId == "") and vendor_suggestion:
-        vendorId_value = vendor_suggestion.get("vendorId")
+        vendor_name_value = vendor_suggestion.get("name") or vendor_text
+        vendorId_value = vendor_name_value  # use human-readable name in vendorId
         category_value = category or vendor_suggestion.get("category")
     else:
-        vendorId_value = vendorId
+        vendor_name_value = vendor_text
+        vendorId_value = vendor_name_value or vendorId  # prefer detected name
         category_value = category
 
     # Amount: form string takes priority; otherwise OCR; otherwise None
@@ -137,7 +141,7 @@ async def upload_receipt(
         "userId": DEMO_USER_ID,
         "receiptId": receipt_id,
 
-        "vendorId": vendorId_value,
+        "vendorId": vendorId_value,  # vendorId now carries the human-readable name
         "jobId": jobId,
         "category": category_value,
         "amount": amount_decimal,

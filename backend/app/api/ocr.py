@@ -12,7 +12,6 @@ router = APIRouter(prefix="/ocr", tags=["ocr"])
 
 class OcrResult(BaseModel):
     rawText: str
-    vendorText: Optional[str]
     amount: Optional[float]
     taxAmount: Optional[float]
     date: Optional[str]

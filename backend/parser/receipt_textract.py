@@ -91,7 +91,7 @@ def parse_receipt_from_bytes(data: bytes):
 
     return {
         "rawText": raw_text,
-        "vendorText": vendor,
+        "vendorText": vendor,  # internal use; not persisted
         "amount": amount,
         "taxAmount": tax_amount,
         "date": date,
@@ -247,4 +247,3 @@ def get_vendor_suggestion(user_id: str, vendor_text : str) -> Optional[Dict[str,
         "name": best["name"]["S"],
         "category": best.get("category", {}).get("S")
     }
-
