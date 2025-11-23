@@ -2,14 +2,31 @@ from typing import Optional, Dict, Any
 import boto3
 import re
 import os
+import base64
+import json
+import requests
 from .vendor_card_matcher import match_vendor, match_card
 from app.core import config
 
 AWS_REGION = config.AWS_REGION
 S3_BUCKET_RECEIPTS = config.S3_BUCKET_RECEIPTS
+GEMINI_API_KEY = config.GEMINI_API_KEY
+GEMINI_MODEL = config.GEMINI_MODEL
+GEMINI_API_BASE = config.GEMINI_API_BASE
+GEMINI_API_VERSION = config.GEMINI_API_VERSION
 
 textract = boto3.client("textract", region_name=AWS_REGION)
 s3 = boto3.client("s3", region_name=AWS_REGION)
+
+# Map common taglines/phrases to their actual vendor names to correct OCR
+KNOWN_VENDOR_HINTS = {
+    "DELIVER HOW": "Home Depot",
+    "HOW DOERS GET MORE DONE": "Home Depot",
+    "HOW DOERS": "Home Depot",
+    "GET MORE DONE": "Home Depot",
+    "THE HOME DEPOT": "Home Depot",
+    "HOME DEPOT": "Home Depot",
+}
 
 
 # ------------------------------------------
@@ -80,7 +97,8 @@ def parse_receipt_from_bytes(data: bytes):
     raw_text = extract_raw_text_from_textract_bytes(data)
     fields = extract_structured_fields_bytes(data)
 
-    vendor = fields.get("vendor") or extract_vendor(raw_text)
+    vendor = normalize_vendor(fields.get("vendor") or extract_vendor(raw_text), raw_text)
+    vendor = verify_vendor_with_gemini(vendor, raw_text)
     amount = fields.get("amount") or extract_amount(raw_text)
     date = fields.get("date") or extract_date(raw_text)
     tax_amount = extract_tax_amount(raw_text)
@@ -105,6 +123,73 @@ def parse_receipt_from_bytes(data: bytes):
 # ------------------------------------------
 # 3. FALLBACKS (regex / heuristics)
 # ------------------------------------------
+def normalize_vendor(vendor: Optional[str], raw_text: str) -> Optional[str]:
+    """
+    Correct common tagline-based mis-reads (e.g., Home Depot slogan).
+    """
+    if vendor:
+        upper = vendor.upper()
+        for hint, name in KNOWN_VENDOR_HINTS.items():
+            if hint in upper:
+                return name
+    upper_text = raw_text.upper()
+    compressed = re.sub(r"\s+", " ", upper_text)
+    stripped = re.sub(r"[^A-Z0-9 ]+", " ", compressed)
+    for hint, name in KNOWN_VENDOR_HINTS.items():
+        if hint in upper_text or hint in compressed or hint in stripped:
+            return name
+    return vendor
+
+
+def verify_vendor_with_gemini(vendor: Optional[str], raw_text: str) -> Optional[str]:
+    """
+    Ask Gemini to pick the vendor name from the OCR text.
+    Falls back silently if Gemini is not configured or errors.
+    """
+    if not GEMINI_API_KEY:
+        return vendor
+
+    prompt = (
+        "Given the receipt text below, return only the merchant/vendor name as plain text. "
+        "If unsure, return UNKNOWN. Do not include any other text."
+    )
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                    {"text": raw_text[:5000]},
+                ]
+            }
+        ]
+    }
+
+    url = (
+        f"{GEMINI_API_BASE.rstrip('/')}/{GEMINI_API_VERSION}/models/"
+        f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+    )
+
+    try:
+        resp = requests.post(url, json=payload, timeout=15)
+        if resp.status_code >= 400:
+            return vendor
+        body = resp.json()
+        candidates = body.get("candidates") or []
+        if not candidates:
+            return vendor
+        parts = candidates[0].get("content", {}).get("parts") or []
+        text_out = ""
+        for part in parts:
+            if "text" in part:
+                text_out += part["text"]
+        cleaned = text_out.strip().strip('"').strip()
+        if cleaned and cleaned.upper() != "UNKNOWN":
+            return normalize_vendor(cleaned, raw_text)
+    except Exception as exc:  # pragma: no cover
+        print(f"Gemini vendor verification failed: {exc}")
+    return vendor
+
+
 def extract_vendor(raw_text: str) -> str:
     """Fallback: first line usually the vendor."""
     return raw_text.split("\n")[0].strip()
