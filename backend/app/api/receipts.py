@@ -1,6 +1,6 @@
 # backend/app/api/receipts.py
 
-from fastapi import APIRouter, UploadFile, File, Form
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from uuid import uuid4
@@ -156,3 +156,41 @@ async def upload_receipt(
 
     table_receipts.put_item(Item=item)
     return item
+
+
+@router.delete("/{receipt_id}")
+def delete_receipt(receipt_id: str):
+    """Delete a single receipt by id for the demo user."""
+    table_receipts.delete_item(
+        Key={"userId": DEMO_USER_ID, "receiptId": receipt_id}
+    )
+    return {"deleted": [receipt_id]}
+
+
+@router.delete("/")
+def delete_receipts(ids: Optional[str] = None, deleteAll: bool = False):
+    """
+    Delete multiple receipts.
+    - If deleteAll=true, delete every receipt for the demo user.
+    - Else, provide a comma-separated `ids` list.
+    """
+    if deleteAll:
+        resp = table_receipts.query(
+            KeyConditionExpression="userId = :uid",
+            ExpressionAttributeValues={":uid": DEMO_USER_ID},
+        )
+        items = resp.get("Items", [])
+        ids_to_delete = [r["receiptId"] for r in items]
+    else:
+        if not ids:
+            raise HTTPException(status_code=400, detail="ids required when deleteAll is false")
+        ids_to_delete = [i.strip() for i in ids.split(",") if i.strip()]
+
+    if not ids_to_delete:
+        return {"deleted": []}
+
+    with table_receipts.batch_writer() as batch:
+        for rid in ids_to_delete:
+            batch.delete_item(Key={"userId": DEMO_USER_ID, "receiptId": rid})
+
+    return {"deleted": ids_to_delete}

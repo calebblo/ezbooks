@@ -1,4 +1,11 @@
 import React, { useState, useEffect, useCallback } from "react";
+import {
+  fetchReceipts,
+  uploadReceipt,
+  buildExportUrl,
+  deleteReceipts,
+  deleteAllReceipts,
+} from "../api/client.js"; // !!!!!! Backend API client
 
 const getDefaultExportDates = () => {
   const end = new Date();
@@ -14,28 +21,50 @@ export default function Dashboard() {
   const [isDragging, setIsDragging] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [exportDates, setExportDates] = useState(getDefaultExportDates);
+  const [isLoading, setIsLoading] = useState(false); // !!!!!! loading state
+  const [isUploading, setIsUploading] = useState(false); // !!!!!! upload state
+  const [error, setError] = useState(null); // !!!!!! error surface
+  const [selectedIds, setSelectedIds] = useState([]); // !!!!!! selection state
+  const [confirmDelete, setConfirmDelete] = useState(null); // {type: "selected"|"all"}
 
-  // ---- TODO: replace with real backend fetch ----
+  const loadReceipts = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await fetchReceipts();
+      setReceipts(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Failed to load receipts", err);
+      setError("Failed to load receipts");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    // example dummy data – delete when you hook up your API
-    // fetch("/api/receipts").then(res => res.json()).then(setReceipts);
-    setReceipts([]);
-  }, []);
-  // ------------------------------------------------
+    loadReceipts();
+  }, [loadReceipts]);
 
-  const handleFiles = useCallback(async (files) => {
-    if (!files.length) return;
+  const handleFiles = useCallback(
+    async (files) => {
+      if (!files.length) return;
 
-    // TODO: call your upload endpoint here
-    // const formData = new FormData();
-    // files.forEach(f => formData.append("receipts", f));
-    // await fetch("/api/receipts/upload", { method: "POST", body: formData });
-    console.log("Uploading files:", files);
-
-    // After upload, refresh list from backend
-    // const updated = await fetch("/api/receipts").then(r => r.json());
-    // setReceipts(updated);
-  }, []);
+      setIsUploading(true);
+      setError(null);
+      try {
+        for (const file of files) {
+          await uploadReceipt(file);
+        }
+        await loadReceipts();
+      } catch (err) {
+        console.error("Upload failed", err);
+        setError("Upload failed. Please try again.");
+      } finally {
+        setIsUploading(false);
+      }
+    },
+    [loadReceipts]
+  );
 
   const handleDrop = (e) => {
     e.preventDefault();
@@ -55,24 +84,63 @@ export default function Dashboard() {
   };
 
   const refreshReceipts = async () => {
-    // TODO: hit your backend refresh route
-    // const updated = await fetch("/api/receipts").then(r => r.json());
-    // setReceipts(updated);
-    console.log("Refreshing receipts…");
+    await loadReceipts();
+    setSelectedIds([]);
   };
 
   const onExport = async (type) => {
     // type: "csv" | "pdf"
     console.log("Exporting", type, "for range", exportDates);
+    const url = buildExportUrl(exportDates);
+    window.location.href = url;
+  };
 
-    // Example:
-    // const params = new URLSearchParams(exportDates);
-    // window.location.href = `/api/receipts/export/${type}?${params.toString()}`;
+  const toggleSelect = (id, checked) => {
+    setSelectedIds((prev) => {
+      const set = new Set(prev);
+      if (checked) {
+        set.add(id);
+      } else {
+        set.delete(id);
+      }
+      return Array.from(set);
+    });
+  };
+
+  const toggleSelectAll = (checked) => {
+    if (checked) {
+      setSelectedIds(receipts.map((r) => r.receiptId || r.id).filter(Boolean));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  const onDeleteConfirmed = async () => {
+    if (!confirmDelete) return;
+    setError(null);
+    try {
+      if (confirmDelete.type === "all") {
+        await deleteAllReceipts();
+        setSelectedIds([]);
+      } else if (confirmDelete.type === "selected") {
+        await deleteReceipts(selectedIds);
+        setSelectedIds([]);
+      }
+      await loadReceipts();
+    } catch (err) {
+      console.error("Delete failed", err);
+      setError("Delete failed. Please try again.");
+    } finally {
+      setConfirmDelete(null);
+    }
   };
 
   // Simple derived stats (swap for real stats API if you have one)
   const totalReceipts = receipts.length;
-  const pendingCount = receipts.filter((r) => r.status === "Pending").length;
+  const pendingCount = receipts.filter((r) => {
+    const status = (r.status || "").toUpperCase();
+    return status.includes("PEND") || status === "UPLOADED";
+  }).length;
   const thisMonthTotal = receipts
     .filter((r) => {
       if (!r.date) return false;
@@ -83,7 +151,18 @@ export default function Dashboard() {
         d.getFullYear() === now.getFullYear()
       );
     })
-    .reduce((sum, r) => sum + (r.amount || 0), 0);
+    .reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+
+  const formatAmount = (value) => {
+    const num = Number(value);
+    return Number.isFinite(num) ? `$${num.toFixed(2)}` : "—";
+  };
+
+  const formatDate = (value) => {
+    if (!value) return "—";
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? value : d.toISOString().slice(0, 10);
+  };
 
   return (
     <div className="min-h-screen bg-[#020617] text-slate-100 flex flex-col">
@@ -92,11 +171,11 @@ export default function Dashboard() {
         <div className="max-w-6xl mx-auto flex items-center justify-between px-6 py-4">
           <div className="flex items-center gap-3">
             <div className="h-8 w-8 rounded-lg bg-indigo-500 flex items-center justify-center font-bold">
-              E2
+              Ez
             </div>
             <div>
               <div className="text-lg font-semibold tracking-tight">
-                E2Books
+                EzBooks
               </div>
               <div className="text-xs text-slate-300/70">
                 Smart Receipt Management for Small Business
@@ -165,6 +244,17 @@ export default function Dashboard() {
 
           {/* MAIN AREA */}
           <section className="flex-1 flex flex-col gap-5">
+            {error && (
+              <div className="rounded-xl border border-rose-500/50 bg-rose-500/10 text-rose-100 px-4 py-3 text-sm">
+                {error}
+              </div>
+            )}
+            {isUploading && (
+              <div className="rounded-xl border border-indigo-500/40 bg-indigo-500/10 text-indigo-100 px-4 py-3 text-sm">
+                Uploading receipts…
+              </div>
+            )}
+
             {/* Upload Area */}
             <div
               onDrop={handleDrop}
@@ -209,13 +299,30 @@ export default function Dashboard() {
                 <h2 className="text-sm font-semibold flex items-center gap-2">
                   <span className="text-base">🧾</span> Receipts
                 </h2>
-                <button
-                  onClick={refreshReceipts}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-700/80 bg-slate-800/70 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 transition"
-                >
-                  <span className="text-xs">⟳</span>
-                  Refresh
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() =>
+                      setConfirmDelete({ type: "selected" })
+                    }
+                    disabled={selectedIds.length === 0}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-100 hover:bg-rose-500/20 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    🗑 Delete Selected
+                  </button>
+                  <button
+                    onClick={() => setConfirmDelete({ type: "all" })}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-100 hover:bg-rose-500/20 transition"
+                  >
+                    🗑 Delete All
+                  </button>
+                  <button
+                    onClick={refreshReceipts}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-700/80 bg-slate-800/70 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 transition"
+                  >
+                    <span className="text-xs">⟳</span>
+                    Refresh
+                  </button>
+                </div>
               </div>
 
               <div className="overflow-x-auto">
@@ -226,6 +333,11 @@ export default function Dashboard() {
                         <input
                           type="checkbox"
                           className="h-3 w-3 accent-indigo-500"
+                          onChange={(e) => toggleSelectAll(e.target.checked)}
+                          checked={
+                            receipts.length > 0 &&
+                            selectedIds.length === receipts.length
+                          }
                         />
                       </th>
                       <Th>Date</Th>
@@ -240,7 +352,16 @@ export default function Dashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {receipts.length === 0 ? (
+                    {isLoading ? (
+                      <tr>
+                        <td
+                          colSpan={9}
+                          className="px-4 py-6 text-center text-xs text-slate-500"
+                        >
+                          Loading receipts…
+                        </td>
+                      </tr>
+                    ) : receipts.length === 0 ? (
                       <tr>
                         <td
                           colSpan={9}
@@ -250,42 +371,56 @@ export default function Dashboard() {
                         </td>
                       </tr>
                     ) : (
-                      receipts.map((r) => (
-                        <tr
-                          key={r.id}
-                          className="border-t border-slate-800/70 hover:bg-slate-800/50 transition"
-                        >
-                          <td className="px-4 py-2">
+                      receipts.map((r) => {
+                        const statusLabel = r.status || "Processed";
+                        const statusClass =
+                          statusLabel.toUpperCase().includes("PEND") ||
+                          statusLabel === "UPLOADED"
+                            ? "bg-amber-500/10 text-amber-300 border border-amber-500/40"
+                            : "bg-emerald-500/10 text-emerald-300 border border-emerald-500/40";
+
+                        return (
+                          <tr
+                            key={r.receiptId || r.id}
+                            className="border-t border-slate-800/70 hover:bg-slate-800/50 transition"
+                          >
+                            <td className="px-4 py-2">
                             <input
                               type="checkbox"
                               className="h-3 w-3 accent-indigo-500"
+                              checked={selectedIds.includes(r.receiptId || r.id)}
+                              onChange={(e) =>
+                                toggleSelect(r.receiptId || r.id, e.target.checked)
+                              }
                             />
-                          </td>
-                          <Td>{r.date}</Td>
-                          <Td>{r.vendor}</Td>
-                          <Td>{r.amount && `$${r.amount.toFixed(2)}`}</Td>
-                          <Td>{r.tax}</Td>
-                          <Td>{r.category}</Td>
-                          <Td>{r.card}</Td>
-                          <Td>{r.job}</Td>
-                          <Td>
-                            <span
-                              className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                                r.status === "Pending"
-                                  ? "bg-amber-500/10 text-amber-300 border border-amber-500/40"
-                                  : "bg-emerald-500/10 text-emerald-300 border border-emerald-500/40"
-                              }`}
-                            >
-                              {r.status || "Processed"}
-                            </span>
-                          </Td>
-                          <Td className="text-right">
-                            <button className="rounded-full border border-slate-700/70 px-2 py-1 text-[11px] hover:bg-slate-700/70 transition">
-                              View
-                            </button>
-                          </Td>
-                        </tr>
-                      ))
+                            </td>
+                            <Td>{formatDate(r.date)}</Td>
+                            <Td>{r.vendorId || "—"}</Td>
+                            <Td>{formatAmount(r.amount)}</Td>
+                            <Td>{formatAmount(r.taxAmount)}</Td>
+                            <Td>{r.category || "—"}</Td>
+                            <Td>{r.cardId || "—"}</Td>
+                            <Td>{r.jobId || "—"}</Td>
+                            <Td>
+                              <span
+                                className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClass}`}
+                              >
+                                {statusLabel}
+                              </span>
+                            </Td>
+                            <Td className="text-right">
+                              <a
+                                href={r.imageUrl || "#"}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="rounded-full border border-slate-700/70 px-2 py-1 text-[11px] hover:bg-slate-700/70 transition"
+                              >
+                                View
+                              </a>
+                            </Td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -357,6 +492,40 @@ export default function Dashboard() {
                 className="flex-1 rounded-2xl bg-slate-800/80 border border-slate-700/80 px-4 py-2.5 text-sm font-semibold hover:bg-slate-700/80 transition"
               >
                 📄 Export PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE CONFIRM MODAL */}
+      {confirmDelete && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800/80 shadow-2xl p-6 relative">
+            <button
+              onClick={() => setConfirmDelete(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-100"
+            >
+              ✕
+            </button>
+            <h2 className="text-lg font-semibold mb-2 text-white">Confirm Delete</h2>
+            <p className="text-sm text-slate-300 mb-6">
+              {confirmDelete.type === "all"
+                ? "Are you sure you want to delete all entries?"
+                : `Are you sure you want to delete ${selectedIds.length} selected item(s)?`}
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={onDeleteConfirmed}
+                className="flex-1 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-500 transition"
+              >
+                Yes, delete
+              </button>
+              <button
+                onClick={() => setConfirmDelete(null)}
+                className="flex-1 rounded-xl bg-slate-800/80 border border-slate-700/80 px-4 py-2.5 text-sm font-semibold text-slate-100 hover:bg-slate-700/80 transition"
+              >
+                Cancel
               </button>
             </div>
           </div>
