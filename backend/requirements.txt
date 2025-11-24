@@ -5,3 +5,4 @@ boto3
 python-dotenv
 python-multipart
 google-genai
+reportlab

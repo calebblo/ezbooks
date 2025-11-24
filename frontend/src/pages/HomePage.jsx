@@ -50,12 +50,15 @@ export default function HomePage() {
             custom={0}
           >
             <motion.div
-              className="inline-flex items-center gap-2 px-4 py-1 rounded-full bg-white/10 border border-white/10 text-xs uppercase tracking-[0.2em] mb-6"
+              className="relative overflow-hidden inline-flex items-center gap-2 px-4 py-1 rounded-full bg-white/10 border border-white/10 text-xs uppercase tracking-[0.2em] mb-6 group"
               variants={fadeUp}
               custom={0.1}
             >
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              AI-powered receipt parsing
+              <div className="absolute inset-0 flex -translate-x-full group-hover:animate-[shimmer_2s_infinite] animate-[shimmer_3s_infinite]">
+                <div className="w-1/2 h-full bg-gradient-to-r from-transparent via-white/20 to-transparent skew-x-[-20deg]" />
+              </div>
+              <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.6)]" />
+              <span className="relative z-10">AI-powered receipt parsing</span>
             </motion.div>
 
             <motion.h1
@@ -64,7 +67,7 @@ export default function HomePage() {
               custom={0.2}
             >
               <span className="bg-gradient-to-r from-white via-white to-purple-200 bg-clip-text text-transparent">
-                Automate your expense tracking.
+                Automate your business expense tracking.
               </span>
               <br />
               <span className="text-gray-200">Just upload receipts.</span>
@@ -257,18 +260,21 @@ export default function HomePage() {
             ].map((card, i) => (
               <motion.div
                 key={card.step}
-                className="p-8 rounded-3xl bg-white/5 border border-white/10 text-left hover:bg-white/[0.07] transition-colors duration-200"
+                className="group relative p-8 rounded-3xl bg-white/5 border border-white/10 text-left hover:bg-white/[0.07] transition-all duration-300"
                 variants={fadeUp}
                 custom={0.2 + i * 0.12}
                 whileHover={{ y: -6, scale: 1.01 }}
               >
+                <div className="absolute inset-0 rounded-3xl border border-transparent group-hover:border-purple-500/30 transition-colors duration-300 pointer-events-none" />
+                <div className="absolute -inset-px rounded-3xl bg-gradient-to-br from-purple-500/0 via-purple-500/0 to-purple-500/0 group-hover:from-purple-500/10 group-hover:to-sky-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+
                 <div
-                  className={`w-9 h-9 rounded-2xl flex items-center justify-center mb-5 text-xs border ${card.color}`}
+                  className={`relative w-9 h-9 rounded-2xl flex items-center justify-center mb-5 text-xs border ${card.color} shadow-lg`}
                 >
                   {card.step}
                 </div>
-                <h3 className="text-xl font-semibold mb-3">{card.title}</h3>
-                <p className="text-gray-300 text-sm">{card.desc}</p>
+                <h3 className="relative text-xl font-semibold mb-3">{card.title}</h3>
+                <p className="relative text-gray-300 text-sm">{card.desc}</p>
               </motion.div>
             ))}
           </div>
@@ -333,12 +339,12 @@ export default function HomePage() {
 
             {/* Pro */}
             <motion.div
-            className="p-8 rounded-[28px] bg-gradient-to-br from-purple-500 via-indigo-500 to-sky-400 text-left shadow-[0_24px_80px_rgba(0,0,0,0.6)] border border-white/30 scale-[1.02]"
-            variants={fadeUp}
-            custom={0.3}
-            whileHover={{ y: -10, scale: 1.04 }}
-            animate={{ y: [-4, 4, -4] }}
-            transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+              className="p-8 rounded-[28px] bg-gradient-to-br from-purple-500 via-indigo-500 to-sky-400 text-left shadow-[0_24px_80px_rgba(0,0,0,0.6)] border border-white/30 scale-[1.02]"
+              variants={fadeUp}
+              custom={0.3}
+              whileHover={{ y: -10, scale: 1.04 }}
+              animate={{ y: [-4, 4, -4] }}
+              transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
             >
 
               <span className="px-3 py-1 bg-white/15 text-xs rounded-full">
@@ -400,8 +406,25 @@ export default function HomePage() {
       </motion.section>
 
       {/* ===== FOOTER ===== */}
-      <footer className="py-10 bg-[#020617] border-t border-white/10 text-center text-gray-500 text-xs">
-        © {new Date().getFullYear()} EzBooks — All rights reserved.
+      <footer className="py-12 bg-[#020617] border-t border-white/10">
+        <div className="max-w-6xl mx-auto px-6 md:px-8 flex flex-col md:flex-row justify-between items-center gap-6">
+          <div className="text-center md:text-left">
+            <div className="text-lg font-bold text-white mb-1">EzBooks</div>
+            <p className="text-xs text-gray-500">
+              © {new Date().getFullYear()} EzBooks Inc. All rights reserved.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-6 text-xs text-gray-400">
+            <a href="#" className="hover:text-white transition-colors">Privacy Policy</a>
+            <a href="#" className="hover:text-white transition-colors">Terms of Service</a>
+            <a href="#" className="hover:text-white transition-colors">Contact</a>
+          </div>
+
+          <div className="text-xs text-gray-500 flex items-center gap-1">
+            Made with <span className="text-rose-500">❤️</span> for builders
+          </div>
+        </div>
       </footer>
     </main>
   );

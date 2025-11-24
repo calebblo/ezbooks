@@ -50,3 +50,12 @@ def create_job(job: JobIn):
 
     table_jobs.put_item(Item=item)
     return item
+
+
+@router.delete("/{job_id}")
+def delete_job(job_id: str):
+    """Delete a job by id for the demo user."""
+    table_jobs.delete_item(
+        Key={"userId": DEMO_USER_ID, "jobId": job_id}
+    )
+    return {"deleted": job_id}

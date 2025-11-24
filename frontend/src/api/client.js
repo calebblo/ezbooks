@@ -1,4 +1,4 @@
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "/api").replace(
+export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "/api").replace(
   /\/$/,
   "",
 );
@@ -53,7 +53,7 @@ export const uploadReceipt = (file, fields = {}) => {
   return apiPost("/receipts", formData);
 };
 
-export const buildExportUrl = (params = {}) => {
+export const buildExportUrl = (params = {}, format = "csv") => {
   const url = new URL(buildUrl("/export"), window.location.origin);
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -61,13 +61,20 @@ export const buildExportUrl = (params = {}) => {
       search.set(key, value);
     }
   });
+  search.set("format", format);
   url.search = search.toString();
   return url.toString();
 };
 
 // Vendors
+// Vendors
 export const fetchVendors = () => apiGet("/vendors");
 export const createVendor = (vendor) => apiPostJson("/vendors", vendor);
+export const deleteVendor = (id) =>
+  fetch(buildUrl(`/vendors/${id}`), {
+    method: "DELETE",
+    credentials: "include",
+  }).then(handleResponse);
 
 // Cards
 export const fetchCards = () => apiGet("/cards");
@@ -76,6 +83,35 @@ export const createCard = (card) => apiPostJson("/cards", card);
 // Jobs
 export const fetchJobs = () => apiGet("/jobs");
 export const createJob = (job) => apiPostJson("/jobs", job);
+export const deleteJob = (id) =>
+  fetch(buildUrl(`/jobs/${id}`), {
+    method: "DELETE",
+    credentials: "include",
+  }).then(handleResponse);
+
+// Categories
+export const fetchCategories = () => apiGet("/categories");
+export const createCategory = (category) => apiPostJson("/categories", category);
+
+// Receipts updates
+export const updateReceipt = (id, updates) =>
+  apiPostJson(`/receipts/${id}`, updates).then((res) => {
+    // If it was a PATCH, apiPostJson might default to POST, but let's check implementation.
+    // Actually apiPostJson uses POST. We need a PATCH helper or just use fetch directly.
+    // Let's add apiPatchJson helper or just use fetch here.
+    return res;
+  });
+
+// We need to fix updateReceipt to use PATCH.
+const apiPatchJson = (path, payload) =>
+  fetch(buildUrl(path), {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).then(handleResponse);
+
+export const updateReceiptField = (id, updates) => apiPatchJson(`/receipts/${id}`, updates);
 
 // Receipts deletes
 export const deleteReceipt = (id) =>

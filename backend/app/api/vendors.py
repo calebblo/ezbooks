@@ -56,3 +56,12 @@ def create_vendor(vendor: VendorIn):
 
     table_vendors.put_item(Item=item)
     return item
+
+
+@router.delete("/{vendor_id}")
+def delete_vendor(vendor_id: str):
+    """Delete a vendor by id for the demo user."""
+    table_vendors.delete_item(
+        Key={"userId": DEMO_USER_ID, "vendorId": vendor_id}
+    )
+    return {"deleted": vendor_id}

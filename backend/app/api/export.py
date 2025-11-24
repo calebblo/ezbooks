@@ -16,14 +16,10 @@ DEMO_USER_ID = "demo-user"
 def export_receipts(
     startDate: Optional[str] = None,
     endDate: Optional[str] = None,
+    format: str = "csv",
 ):
     """
-    Export receipts as CSV for the demo user.
-
-    For now:
-      - pulls all receipts for DEMO_USER_ID
-      - (optionally) filters by date string if present
-      - returns a CSV with basic fields
+    Export receipts as CSV or PDF for the demo user.
     """
     # 1) Get all receipts for this user
     resp = table_receipts.query(
@@ -37,6 +33,54 @@ def export_receipts(
         items = [r for r in items if r.get("date") is None or r["date"] >= startDate]
     if endDate is not None:
         items = [r for r in items if r.get("date") is None or r["date"] <= endDate]
+
+    if format == "pdf":
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+
+        buffer = io.BytesIO()
+        p = canvas.Canvas(buffer, pagesize=letter)
+        width, height = letter
+
+        y = height - 40
+        p.setFont("Helvetica-Bold", 16)
+        p.drawString(30, y, "EzBooks Receipt Export")
+        y -= 30
+
+        p.setFont("Helvetica", 10)
+        headers = ["Date", "Vendor", "Category", "Amount", "Tax", "Status"]
+        x_positions = [30, 110, 200, 300, 380, 460]
+
+        for i, h in enumerate(headers):
+            p.drawString(x_positions[i], y, h)
+        
+        y -= 20
+        p.line(30, y+15, 550, y+15)
+
+        for r in items:
+            if y < 50:
+                p.showPage()
+                y = height - 40
+            
+            p.drawString(x_positions[0], y, str(r.get("date") or ""))
+            p.drawString(x_positions[1], y, str(r.get("vendorId") or "")[:15])
+            p.drawString(x_positions[2], y, str(r.get("category") or "")[:15])
+            p.drawString(x_positions[3], y, str(r.get("amount") or ""))
+            p.drawString(x_positions[4], y, str(r.get("taxAmount") or ""))
+            p.drawString(x_positions[5], y, str(r.get("status") or ""))
+            y -= 15
+
+        p.save()
+        pdf_data = buffer.getvalue()
+        buffer.close()
+
+        return Response(
+            content=pdf_data,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": 'attachment; filename="ezbooks-export.pdf"'
+            },
+        )
 
     # 3) Build CSV in memory
     output = io.StringIO()

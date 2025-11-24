@@ -96,10 +96,14 @@ def parse_receipt_from_bytes(data: bytes):
     amount = fields.get("amount") or extract_amount(raw_text)
     date = fields.get("date") or extract_date(raw_text)
     tax_amount = extract_tax_amount(raw_text)
-    card_last4 = extract_card_last4(raw_text)
+    payment_method = extract_payment_method(raw_text)
 
     vendor_suggestion = match_vendor(vendor)
-    card_match = match_card(card_last4)
+    # We can still try to match card if we have digits, but for now let's just use the payment string
+    card_match = None 
+    if payment_method and payment_method.startswith("****"):
+        last4 = payment_method.split()[-1]
+        card_match = match_card(last4)
 
     return {
         "rawText": raw_text,
@@ -107,7 +111,7 @@ def parse_receipt_from_bytes(data: bytes):
         "amount": amount,
         "taxAmount": tax_amount,
         "date": date,
-        "cardLast4": card_last4,
+        "paymentMethod": payment_method,
         "vendorSuggestion": vendor_suggestion,
         "cardMatch": card_match,
     }
@@ -200,10 +204,20 @@ def extract_amount(raw_text: str) -> Optional[float]:
     return None
 
 
-def extract_card_last4(raw_text: str) -> Optional[str]:
-    match = re.search(r"(?:\*{4}|X{4})\s?(\d{4})", raw_text)
+def extract_payment_method(raw_text: str) -> Optional[str]:
+    """
+    Returns 'Cash' if cash is detected, or '**** 1234' if a card pattern is found.
+    """
+    # 1. Check for Cash
+    # Look for standalone "CASH" or "CASH TENDER" etc.
+    if re.search(r"\bCASH\b", raw_text, re.IGNORECASE):
+        return "Cash"
+
+    # 2. Check for Card pattern (**** 1234 or XXXX 1234)
+    match = re.search(r"(?:\*{4}|X{4})\s?(\d{4})", raw_text, re.IGNORECASE)
     if match:
-        return match.group(1)
+        return f"**** {match.group(1)}"
+    
     return None
 
 def extract_tax_amount(raw_text: str) -> Optional[float]:

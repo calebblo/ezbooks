@@ -6,6 +6,8 @@ from app.api.jobs import router as jobs_router
 from app.api.receipts import router as receipts_router
 from app.api.export import router as export_router
 from app.api.ocr import router as ocr_router
+from app.api.categories import router as categories_router
+from app.api.auth import router as auth_router
 from app.core import config
 
 app = FastAPI(title="EZBooks Backend")
@@ -26,6 +28,8 @@ app.include_router(jobs_router)
 app.include_router(receipts_router)
 app.include_router(export_router)
 app.include_router(ocr_router)
+app.include_router(categories_router)
+app.include_router(auth_router)
 
 @app.get("/health")
 def health_check():
