@@ -1,15 +1,20 @@
 import boto3
 from . import config
 
-# Create a boto3 session using our .env credentials
+# Create boto3 sessions
 session = boto3.Session(
     aws_access_key_id=config.AWS_ACCESS_KEY_ID,
     aws_secret_access_key=config.AWS_SECRET_ACCESS_KEY,
     region_name=config.AWS_REGION,
 )
+s3_session = boto3.Session(
+    aws_access_key_id=config.AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=config.AWS_SECRET_ACCESS_KEY,
+    region_name=config.S3_REGION,
+)
 
 # AWS clients
-s3_client = session.client("s3")
+s3_client = s3_session.client("s3")
 dynamodb = session.resource("dynamodb")
 
 # DynamoDB tables

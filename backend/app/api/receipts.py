@@ -77,6 +77,9 @@ async def upload_receipt(
         ocr_result = parse_receipt_from_bytes(file_bytes)
         raw_text = ocr_result.get("rawText")
         vendor_text = ocr_result.get("vendorText")
+        # Treat marketing header "DELIVER HOW" as no vendor
+        if vendor_text and vendor_text.strip().upper() == "DELIVER HOW":
+            vendor_text = None
         parsed_amount = ocr_result.get("amount")
         parsed_date = ocr_result.get("date")
         parsed_tax = ocr_result.get("taxAmount")
@@ -136,7 +139,16 @@ async def upload_receipt(
     # Card – you could use card_match here if you wire it to cardId
     cardId_value = cardId
 
-    # 4) Build item for DynamoDB
+    # 4) Determine status based on completeness
+    has_required_fields = (
+        bool(vendorId_value)
+        and amount_decimal is not None
+        and tax_decimal is not None
+        and date_value not in (None, "", "null")
+    )
+    status_value = "PROCESSED" if has_required_fields else "PENDING"
+
+    # 5) Build item for DynamoDB
     item = {
         "userId": DEMO_USER_ID,
         "receiptId": receipt_id,
@@ -151,7 +163,7 @@ async def upload_receipt(
 
         "imageUrl": image_url,
         "rawText": raw_text,
-        "status": "OCR_PARSED" if raw_text else "UPLOADED",
+        "status": status_value,
     }
 
     table_receipts.put_item(Item=item)
@@ -194,3 +206,31 @@ def delete_receipts(ids: Optional[str] = None, deleteAll: bool = False):
             batch.delete_item(Key={"userId": DEMO_USER_ID, "receiptId": rid})
 
     return {"deleted": ids_to_delete}
+
+
+@router.get("/{receipt_id}/image")
+def get_receipt_image(receipt_id: str):
+    """Return a short-lived presigned URL for the receipt image."""
+    resp = table_receipts.get_item(
+        Key={"userId": DEMO_USER_ID, "receiptId": receipt_id}
+    )
+    item = resp.get("Item")
+    if not item:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+
+    image_url = item.get("imageUrl")
+    if not image_url or not image_url.startswith("s3://"):
+        raise HTTPException(status_code=400, detail="No S3 image available for this receipt")
+
+    without_scheme = image_url.replace("s3://", "")
+    parts = without_scheme.split("/", 1)
+    if len(parts) != 2:
+        raise HTTPException(status_code=400, detail="Invalid S3 image URL")
+    bucket, key = parts
+
+    presigned = s3_client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": key},
+        ExpiresIn=3600,
+    )
+    return {"url": presigned}

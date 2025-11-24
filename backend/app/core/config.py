@@ -20,6 +20,7 @@ AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 
 # S3 + Dynamo
 S3_BUCKET_RECEIPTS = os.getenv("S3_BUCKET_RECEIPTS")
+S3_REGION = os.getenv("S3_REGION", AWS_REGION)  # allow bucket in a different region
 
 DDB_TABLE_VENDORS = os.getenv("DDB_TABLE_VENDORS")
 DDB_TABLE_CARDS = os.getenv("DDB_TABLE_CARDS")

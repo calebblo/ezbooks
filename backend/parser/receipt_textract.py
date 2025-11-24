@@ -5,11 +5,21 @@ import os
 from .vendor_card_matcher import match_vendor, match_card
 from app.core import config
 
+try:
+    from google import genai
+except ImportError:
+    genai = None
+
 AWS_REGION = config.AWS_REGION
 S3_BUCKET_RECEIPTS = config.S3_BUCKET_RECEIPTS
 
 textract = boto3.client("textract", region_name=AWS_REGION)
 s3 = boto3.client("s3", region_name=AWS_REGION)
+
+# Optional Gemini client for vendor validation
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+gemini_client = genai.Client(api_key=GEMINI_API_KEY) if genai and GEMINI_API_KEY else None
+gemini_enabled = bool(gemini_client)
 
 
 # ------------------------------------------
@@ -81,6 +91,8 @@ def parse_receipt_from_bytes(data: bytes):
     fields = extract_structured_fields_bytes(data)
 
     vendor = fields.get("vendor") or extract_vendor(raw_text)
+    if vendor:
+        vendor = validate_vendor_name(vendor)  # drop invalid names like slogans
     amount = fields.get("amount") or extract_amount(raw_text)
     date = fields.get("date") or extract_date(raw_text)
     tax_amount = extract_tax_amount(raw_text)
@@ -106,8 +118,59 @@ def parse_receipt_from_bytes(data: bytes):
 # 3. FALLBACKS (regex / heuristics)
 # ------------------------------------------
 def extract_vendor(raw_text: str) -> str:
-    """Fallback: first line usually the vendor."""
-    return raw_text.split("\n")[0].strip()
+    """Fallback: first non-empty line, skipping marketing tags like 'DELIVER HOW'."""
+    for line in raw_text.split("\n"):
+        candidate = line.strip()
+        if not candidate:
+            continue
+        upper = candidate.upper()
+        if upper in ("DELIVER HOW", "HOW DOERS GET MORE DONE"):
+            continue
+        return candidate
+    return ""
+
+
+def validate_vendor_name(name: str) -> Optional[str]:
+    """
+    Use Gemini (if configured) to validate that a candidate string looks like a real business name.
+    Returns the name if it passes, otherwise None.
+    Falls back to simple heuristics if Gemini is unavailable.
+    """
+    if not name:
+        return None
+
+    cleaned = name.strip()
+    upper = cleaned.upper()
+    if upper in ("DELIVER HOW", "HOW DOERS GET MORE DONE"):
+        return None
+
+    # Heuristic: reject very short strings and obvious non-names
+    if len(cleaned) < 3:
+        return None
+
+    # If Gemini is available, ask it to validate
+    global gemini_enabled
+    if gemini_client and gemini_enabled:
+        try:
+            prompt = (
+                "Decide if the following string is a real business/store name from a receipt. "
+                "Respond with only YES or NO.\n\n"
+                f"Name: {cleaned}"
+            )
+            resp = gemini_client.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=[prompt],
+            )
+            answer = (getattr(resp, "text", "") or "").strip().upper()
+            if answer.startswith("YES"):
+                return cleaned
+            return None
+        except Exception as e:
+            print(f"[Gemini Vendor Validation] Error: {e}")
+            gemini_enabled = False  # disable further calls on failure
+
+    # If no Gemini or failure, return the cleaned name
+    return cleaned
 
 
 def extract_date(raw_text: str) -> Optional[str]:
