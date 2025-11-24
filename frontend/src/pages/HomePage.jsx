@@ -1,8 +1,11 @@
 // pages/HomePage.jsx
 import { motion } from "framer-motion";
+import { useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar.jsx";
 import ScrollShowcase from "../components/ScrollShowcase.jsx";
 import ScrollProgress from "../components/ScrollProgress.jsx";
+
+const STRIPE_CHECKOUT_URL = "https://buy.stripe.com/test_fZu3cxfeZ11l5ft9ALd7q00";
 
 const fadeUp = {
   hidden: { opacity: 0, y: 40 },
@@ -14,6 +17,8 @@ const fadeUp = {
 };
 
 export default function HomePage() {
+  const navigate = useNavigate();
+
   return (
     <main className="bg-[#050816] text-white w-full overflow-x-hidden">
       <Navbar />
@@ -89,6 +94,7 @@ export default function HomePage() {
                 whileHover={{ scale: 1.04, y: -2 }}
                 whileTap={{ scale: 0.97, y: 0 }}
                 className="px-7 md:px-8 py-3.5 md:py-4 bg-white text-black rounded-2xl text-sm md:text-base font-medium shadow-[0_18px_60px_rgba(0,0,0,0.35)]"
+                onClick={() => navigate("/login")}
               >
                 Get Started
               </motion.button>
@@ -142,7 +148,9 @@ export default function HomePage() {
                     <span className="w-2.5 h-2.5 rounded-full bg-amber-300" />
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
                   </div>
-                  <p className="text-xs text-gray-400">Dashboard • This month</p>
+                  <p className="text-xs text-gray-400">
+                    Dashboard • This month
+                  </p>
                 </div>
 
                 {/* Main chart area */}
@@ -174,7 +182,9 @@ export default function HomePage() {
                     }}
                   >
                     <div className="flex justify-between mb-1">
-                      <span className="font-semibold text-[11px]">Coffee Co.</span>
+                      <span className="font-semibold text-[11px]">
+                        Coffee Co.
+                      </span>
                       <span className="text-[11px] text-gray-600">$12.40</span>
                     </div>
                     <div className="h-px bg-gray-200 my-1" />
@@ -326,6 +336,7 @@ export default function HomePage() {
                 className="mt-8 w-full py-3.5 bg-white text-black rounded-xl text-sm font-medium"
                 whileHover={{ scale: 1.03, y: -2 }}
                 whileTap={{ scale: 0.97, y: 0 }}
+                onClick={() => navigate("/login")}
               >
                 Get Started
               </motion.button>
@@ -333,14 +344,13 @@ export default function HomePage() {
 
             {/* Pro */}
             <motion.div
-            className="p-8 rounded-[28px] bg-gradient-to-br from-purple-500 via-indigo-500 to-sky-400 text-left shadow-[0_24px_80px_rgba(0,0,0,0.6)] border border-white/30 scale-[1.02]"
-            variants={fadeUp}
-            custom={0.3}
-            whileHover={{ y: -10, scale: 1.04 }}
-            animate={{ y: [-4, 4, -4] }}
-            transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+              className="p-8 rounded-[28px] bg-gradient-to-br from-purple-500 via-indigo-500 to-sky-400 text-left shadow-[0_24px_80px_rgba(0,0,0,0.6)] border border-white/30 scale-[1.02]"
+              variants={fadeUp}
+              custom={0.3}
+              whileHover={{ y: -10, scale: 1.04 }}
+              animate={{ y: [-4, 4, -4] }}
+              transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
             >
-
               <span className="px-3 py-1 bg-white/15 text-xs rounded-full">
                 Most Popular
               </span>
@@ -359,6 +369,9 @@ export default function HomePage() {
                 className="w-full py-3.5 bg-white text-black rounded-xl text-sm font-medium"
                 whileHover={{ scale: 1.04, y: -2 }}
                 whileTap={{ scale: 0.97, y: 0 }}
+                onClick={() => {
+                  window.location.href = STRIPE_CHECKOUT_URL;
+                }}
               >
                 Start Free Trial
               </motion.button>
