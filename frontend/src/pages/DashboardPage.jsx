@@ -5,6 +5,7 @@ import {
   buildExportUrl,
   deleteReceipts,
   deleteAllReceipts,
+  fetchReceiptImage,
 } from "../api/client.js"; // !!!!!! Backend API client
 
 const getDefaultExportDates = () => {
@@ -26,6 +27,7 @@ export default function Dashboard() {
   const [error, setError] = useState(null); // !!!!!! error surface
   const [selectedIds, setSelectedIds] = useState([]); // !!!!!! selection state
   const [confirmDelete, setConfirmDelete] = useState(null); // {type: "selected"|"all"}
+  const [viewImage, setViewImage] = useState(null); // {url, vendor, date, error?: bool}
 
   const loadReceipts = useCallback(async () => {
     setIsLoading(true);
@@ -162,6 +164,30 @@ export default function Dashboard() {
     if (!value) return "—";
     const d = new Date(value);
     return Number.isNaN(d.getTime()) ? value : d.toISOString().slice(0, 10);
+  };
+
+  const openImageModal = async (receipt) => {
+    const receiptId = receipt.receiptId || receipt.id;
+    const baseState = {
+      url: null,
+      vendor: receipt.vendorId || "Receipt",
+      date: formatDate(receipt.date),
+      error: false,
+      loading: true,
+      receiptId,
+    };
+    setViewImage(baseState);
+    try {
+      const resp = await fetchReceiptImage(receiptId);
+      if (resp?.url) {
+        setViewImage({ ...baseState, url: resp.url, loading: false });
+      } else {
+        setViewImage({ ...baseState, loading: false, error: true });
+      }
+    } catch (err) {
+      console.error("Failed to fetch image", err);
+      setViewImage({ ...baseState, loading: false, error: true });
+    }
   };
 
   return (
@@ -409,14 +435,12 @@ export default function Dashboard() {
                               </span>
                             </Td>
                             <Td className="text-right">
-                              <a
-                                href={r.imageUrl || "#"}
-                                target="_blank"
-                                rel="noreferrer"
+                              <button
+                                onClick={() => openImageModal(r)}
                                 className="rounded-full border border-slate-700/70 px-2 py-1 text-[11px] hover:bg-slate-700/70 transition"
                               >
                                 View
-                              </a>
+                              </button>
                             </Td>
                           </tr>
                         );
@@ -527,6 +551,52 @@ export default function Dashboard() {
               >
                 Cancel
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW IMAGE MODAL */}
+      {viewImage && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 px-4">
+          <div className="relative bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-4xl w-full overflow-hidden">
+            <button
+              onClick={() => setViewImage(null)}
+              className="absolute top-3 right-3 text-slate-300 hover:text-white"
+            >
+              ✕
+            </button>
+            <div className="p-4 flex items-center justify-between text-slate-200 text-sm border-b border-slate-800">
+              <div className="font-semibold">{viewImage.vendor}</div>
+              <div className="text-slate-400">{viewImage.date}</div>
+            </div>
+            <div className="bg-black/40 flex items-center justify-center p-4 min-h-[200px]">
+              {viewImage.error ? (
+                <div className="text-sm text-rose-200 text-center space-y-2">
+                  <div>Could not load image.</div>
+                  {viewImage.url && (
+                    <a
+                      href={viewImage.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline text-indigo-300"
+                    >
+                      Open image in new tab
+                    </a>
+                  )}
+                </div>
+              ) : viewImage.loading ? (
+                <div className="text-slate-200 text-sm">Loading image…</div>
+              ) : (
+                <img
+                  src={viewImage.url}
+                  alt={viewImage.vendor}
+                  className="max-h-[80vh] max-w-full object-contain"
+                  onError={() =>
+                    setViewImage((prev) => ({ ...prev, error: true }))
+                  }
+                />
+              )}
             </div>
           </div>
         </div>

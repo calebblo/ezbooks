@@ -51,7 +51,6 @@ def export_receipts(
         "taxAmount",
         "cardId",
         "jobId",
-        "imageUrl",
         "status",
     ])
 
@@ -64,7 +63,6 @@ def export_receipts(
             r.get("taxAmount") or "",
             r.get("cardId") or "",
             r.get("jobId") or "",
-            r.get("imageUrl") or "",
             r.get("status") or "",
         ])
 

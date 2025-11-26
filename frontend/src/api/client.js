@@ -100,3 +100,7 @@ export const deleteAllReceipts = () =>
     method: "DELETE",
     credentials: "include",
   }).then(handleResponse);
+
+// Presigned image URL
+export const fetchReceiptImage = (id) =>
+  apiGet(`/receipts/${id}/image`);
