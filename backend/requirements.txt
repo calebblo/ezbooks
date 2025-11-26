@@ -6,3 +6,7 @@ python-dotenv
 python-multipart
 google-genai
 reportlab
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt<5.0.0
+slowapi

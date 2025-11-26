@@ -1,54 +1,49 @@
-from fastapi import APIRouter, HTTPException
+"""
+Authentication endpoints for Supabase integration.
+"""
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
-import time
-from datetime import datetime, timedelta
-from app.core.aws import table_users, table_receipts
-from boto3.dynamodb.conditions import Key
+
+from app.core.aws import table_users
+from app.core.auth_utils import get_current_user, User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-DEMO_USER_ID = "demo-user"
 FREE_LIMIT = 20
 
+
 class UserOut(BaseModel):
+    """User profile response"""
     userId: str
-    tier: str  # FREE, PRO, ENTERPRISE
+    email: str
+    tier: str
     usage: int
     limit: Optional[int]
-    isTrialActive: bool = False # Deprecated but kept for frontend compat if needed
-    daysRemaining: int = 0
+    created: int
+
 
 @router.get("/me", response_model=UserOut)
-def get_current_user():
-    # Check if user exists
-    resp = table_users.get_item(Key={"userId": DEMO_USER_ID})
-    user = resp.get("Item")
+async def get_current_user_profile(current_user: User = Depends(get_current_user)):
+    """
+    Get the current authenticated user's profile.
     
-    current_time = int(time.time())
-    
-    if not user:
-        # Create new user (default to FREE)
-        user = {
-            "userId": DEMO_USER_ID,
-            "tier": "FREE",
-            "created": current_time
-        }
-        table_users.put_item(Item=user)
-    
-    tier = user.get("tier", "FREE")
-    
-    # Use persistent usage counter from user record
-    # Default to 0 if not present
-    usage = int(user.get("monthlyUsage", 0))
-    
+    - In development mode (no JWT secret): Returns demo user automatically
+    - In production mode (JWT secret configured): Requires valid Supabase JWT token
+    """
+    tier = current_user.tier
+    usage = current_user.monthlyUsage
     limit = FREE_LIMIT if tier == "FREE" else None
     
+    # Fetch full user data from DynamoDB
+    resp = table_users.get_item(Key={"userId": current_user.userId})
+    user_item = resp.get("Item", {})
+    
     return UserOut(
-        userId=DEMO_USER_ID,
+        userId=current_user.userId,
+        email=current_user.email,
         tier=tier,
         usage=usage,
         limit=limit,
-        isTrialActive=True, # Always true for now to avoid blocking
-        daysRemaining=30
+        created=user_item.get("created", 0)
     )

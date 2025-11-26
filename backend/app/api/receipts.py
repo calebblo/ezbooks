@@ -11,18 +11,14 @@ import os
 
 from app.core.aws import table_receipts, table_vendors, table_users, s3_client
 from app.core import config
+from app.core.auth_utils import get_current_user, User
 from parser.receipt_textract import parse_receipt_from_bytes
 from botocore.exceptions import ClientError
-# Import get_current_user for dependency injection
-# Note: We import inside the function or use a string forward ref if circular, 
-# but here we can try top level if no cycle. 
-# To be safe and avoid cycles with main.py/auth.py, we can import inside or use a separate deps file.
-# For now, let's just fetch the user manually in the function to avoid complex dependency refactoring.
-from app.api.auth import get_current_user
 
 router = APIRouter(prefix="/receipts", tags=["receipts"])
 
-DEMO_USER_ID = "demo-user"
+# File upload limits
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 
 class ReceiptOut(BaseModel):
@@ -43,11 +39,11 @@ class ReceiptOut(BaseModel):
 
 
 @router.get("/", response_model=List[ReceiptOut])
-def list_receipts():
-    """Return all receipts for the demo user."""
+def list_receipts(current_user: User = Depends(get_current_user)):
+    """Return all receipts for the authenticated user."""
     resp = table_receipts.query(
         KeyConditionExpression="userId = :uid",
-        ExpressionAttributeValues={":uid": DEMO_USER_ID},
+        ExpressionAttributeValues={":uid": current_user.userId},
     )
     return resp.get("Items", [])
 
@@ -62,18 +58,30 @@ async def upload_receipt(
     amount: Optional[float] = Form(default=None),
     taxAmount: Optional[float] = Form(default=None),
     paymentMethod: Optional[str] = Form(default=None),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Upload a receipt image, run OCR with Textract (Bytes API),
     and save to DynamoDB.
     """
-    # Check limits
-    user = get_current_user()
-    if user.limit is not None and user.usage >= user.limit:
-        raise HTTPException(status_code=403, detail=f"Upload limit reached ({user.limit} receipts). Please upgrade to Pro.")
-
-    # 0) Read the file ONCE into memory and never touch file.file again
+    # 0) Read the file ONCE into memory and validate size
     file_bytes = await file.read()
+    
+    # Validate file size (10MB limit)
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size is {MAX_FILE_SIZE / 1024 / 1024}MB"
+        )
+    
+    # Check usage limits
+    if current_user.tier == "FREE":
+        limit = 20
+        if current_user.monthlyUsage >= limit:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Upload limit reached ({limit} receipts). Please upgrade to Pro."
+            )
 
     receipt_id = str(uuid4())
 
@@ -118,7 +126,7 @@ async def upload_receipt(
         print("Textract error, skipping OCR:", e)
 
     # 2) Upload the same bytes to S3
-    s3_key = f"{DEMO_USER_ID}/receipts/{receipt_id}-{file.filename}"
+    s3_key = f"{current_user.userId}/receipts/{receipt_id}-{file.filename}"
 
     s3_client.upload_fileobj(
         io.BytesIO(file_bytes),
@@ -131,7 +139,9 @@ async def upload_receipt(
 
     # 3) Use OCR values as defaults, but let form override them
 
-    # Vendor + category
+    # Vendor + category with smart auto-categorization
+    matched_vendor = None
+    
     if (vendorId is None or vendorId == "") and vendor_suggestion:
         vendor_name_value = vendor_suggestion.get("name") or vendor_text
         vendorId_value = vendor_name_value  # use human-readable name in vendorId
@@ -141,24 +151,52 @@ async def upload_receipt(
         vendorId_value = vendor_name_value or vendorId  # prefer detected name
         category_value = category
 
-    # Auto-add vendor if new
+    # Smart auto-categorization: Look up vendor and use its default category
     if vendorId_value:
-        # Check if exists (by name)
+        print(f"🔍 Looking for vendor: '{vendorId_value}'")
+        
+        # Check if vendor exists and get its details
         existing_vendors_resp = table_vendors.query(
             KeyConditionExpression="userId = :uid",
-            ExpressionAttributeValues={":uid": DEMO_USER_ID}
+            ExpressionAttributeValues={":uid": current_user.userId}
         )
-        existing_names = {v["name"].lower() for v in existing_vendors_resp.get("Items", [])}
         
-        if vendorId_value.lower() not in existing_names:
-            # Create new vendor
-            new_vendor_id = str(uuid4())
-            table_vendors.put_item(Item={
-                "userId": DEMO_USER_ID,
-                "vendorId": new_vendor_id,
-                "name": vendorId_value,
-                "matchKeywords": [vendorId_value.upper()]
-            })
+        vendor_names = [v["name"] for v in existing_vendors_resp.get("Items", [])]
+        print(f"📋 Found {len(vendor_names)} existing vendors: {vendor_names}")
+        
+        # Find matching vendor by name (case-insensitive)
+        for v in existing_vendors_resp.get("Items", []):
+            if v["name"].lower() == vendorId_value.lower():
+                matched_vendor = v
+                print(f"✅ Matched vendor: {v['name']} (defaultCategory: {v.get('defaultCategory')})")
+                break
+        
+        if not matched_vendor:
+            print(f"❌ No match found for '{vendorId_value}'")
+        
+        # Auto-assign category from vendor's default if:
+        # 1. Vendor exists and has a default category
+        # 2. User didn't manually specify a category
+        if matched_vendor and matched_vendor.get("defaultCategory") and not category_value:
+            category_value = matched_vendor["defaultCategory"]
+            print(f"✨ Auto-assigned category '{category_value}' from vendor '{matched_vendor['name']}'")
+        elif matched_vendor and not matched_vendor.get("defaultCategory"):
+            print(f"⚠️  Vendor '{matched_vendor['name']}' has no default category")
+        elif matched_vendor and category_value:
+            print(f"ℹ️  User manually specified category '{category_value}', skipping auto-assignment")
+
+    # Auto-add vendor if new
+    if vendorId_value and not matched_vendor:
+        # Create new vendor
+        new_vendor_id = str(uuid4())
+        table_vendors.put_item(Item={
+            "userId": current_user.userId,
+            "vendorId": new_vendor_id,
+            "name": vendorId_value,
+            "matchKeywords": [vendorId_value.upper()],
+            "defaultCategory": category_value  # Save category as default for future receipts
+        })
+        print(f"📝 Created new vendor '{vendorId_value}' with default category '{category_value}'")
 
     # Amount: form string takes priority; otherwise OCR; otherwise None
     if amount not in (None, "", "null"):
@@ -204,7 +242,7 @@ async def upload_receipt(
     # 6) Save to DynamoDB
     item = {
         "receiptId": receipt_id,
-        "userId": DEMO_USER_ID,
+        "userId": current_user.userId,
         "imageUrl": image_url, # Used image_url as defined earlier
         "rawText": raw_text,
         "status": status_value, # Used status_value as calculated
@@ -223,7 +261,7 @@ async def upload_receipt(
     # 7) Increment user usage
     try:
         table_users.update_item(
-            Key={"userId": DEMO_USER_ID},
+            Key={"userId": current_user.userId},
             UpdateExpression="SET monthlyUsage = if_not_exists(monthlyUsage, :start) + :inc",
             ExpressionAttributeValues={
                 ":start": 0,
@@ -237,25 +275,29 @@ async def upload_receipt(
 
 
 @router.delete("/{receipt_id}")
-def delete_receipt(receipt_id: str):
-    """Delete a single receipt by id for the demo user."""
+def delete_receipt(receipt_id: str, current_user: User = Depends(get_current_user)):
+    """Delete a single receipt by id for the authenticated user."""
     table_receipts.delete_item(
-        Key={"userId": DEMO_USER_ID, "receiptId": receipt_id}
+        Key={"userId": current_user.userId, "receiptId": receipt_id}
     )
     return {"deleted": [receipt_id]}
 
 
 @router.delete("/")
-def delete_receipts(ids: Optional[str] = None, deleteAll: bool = False):
+def delete_receipts(
+    ids: Optional[str] = None,
+    deleteAll: bool = False,
+    current_user: User = Depends(get_current_user)
+):
     """
     Delete multiple receipts.
-    - If deleteAll=true, delete every receipt for the demo user.
+    - If deleteAll=true, delete every receipt for the authenticated user.
     - Else, provide a comma-separated `ids` list.
     """
     if deleteAll:
         resp = table_receipts.query(
             KeyConditionExpression="userId = :uid",
-            ExpressionAttributeValues={":uid": DEMO_USER_ID},
+            ExpressionAttributeValues={":uid": current_user.userId},
         )
         items = resp.get("Items", [])
         ids_to_delete = [r["receiptId"] for r in items]
@@ -269,7 +311,7 @@ def delete_receipts(ids: Optional[str] = None, deleteAll: bool = False):
 
     with table_receipts.batch_writer() as batch:
         for rid in ids_to_delete:
-            batch.delete_item(Key={"userId": DEMO_USER_ID, "receiptId": rid})
+            batch.delete_item(Key={"userId": current_user.userId, "receiptId": rid})
 
     return {"deleted": ids_to_delete}
 
@@ -286,11 +328,15 @@ class ReceiptUpdate(BaseModel):
 
 
 @router.patch("/{receipt_id}", response_model=ReceiptOut)
-def update_receipt(receipt_id: str, updates: ReceiptUpdate):
+def update_receipt(
+    receipt_id: str,
+    updates: ReceiptUpdate,
+    current_user: User = Depends(get_current_user)
+):
     """Update a receipt's fields."""
     # 1) Get existing receipt
     resp = table_receipts.get_item(
-        Key={"userId": DEMO_USER_ID, "receiptId": receipt_id}
+        Key={"userId": current_user.userId, "receiptId": receipt_id}
     )
     item = resp.get("Item")
     if not item:
@@ -329,7 +375,7 @@ def update_receipt(receipt_id: str, updates: ReceiptUpdate):
 
     # 3) Update item
     updated_resp = table_receipts.update_item(
-        Key={"userId": DEMO_USER_ID, "receiptId": receipt_id},
+        Key={"userId": current_user.userId, "receiptId": receipt_id},
         UpdateExpression=update_expression,
         ExpressionAttributeValues=expr_attr_values,
         ExpressionAttributeNames=expr_attr_names,
@@ -340,10 +386,10 @@ def update_receipt(receipt_id: str, updates: ReceiptUpdate):
 
 
 @router.get("/{receipt_id}/image")
-def get_receipt_image(receipt_id: str):
+def get_receipt_image(receipt_id: str, current_user: User = Depends(get_current_user)):
     """Return a short-lived presigned URL for the receipt image."""
     resp = table_receipts.get_item(
-        Key={"userId": DEMO_USER_ID, "receiptId": receipt_id}
+        Key={"userId": current_user.userId, "receiptId": receipt_id}
     )
     item = resp.get("Item")
     if not item:
