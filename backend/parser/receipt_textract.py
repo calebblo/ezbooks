@@ -18,6 +18,8 @@ s3 = boto3.client("s3", region_name=AWS_REGION)
 
 # Optional Gemini client for vendor validation
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# Default to a model known to work with v1beta; override via GEMINI_MODEL if needed.
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if genai and GEMINI_API_KEY else None
 gemini_enabled = bool(gemini_client)
 
@@ -92,7 +94,7 @@ def parse_receipt_from_bytes(data: bytes):
 
     vendor = fields.get("vendor") or extract_vendor(raw_text)
     if vendor:
-        vendor = validate_vendor_name(vendor)  # drop invalid names like slogans
+        vendor = validate_vendor_name(vendor, raw_text)  # drop invalid names like slogans
     amount = fields.get("amount") or extract_amount(raw_text)
     date = fields.get("date") or extract_date(raw_text)
     tax_amount = extract_tax_amount(raw_text)
@@ -130,9 +132,9 @@ def extract_vendor(raw_text: str) -> str:
     return ""
 
 
-def validate_vendor_name(name: str) -> Optional[str]:
+def validate_vendor_name(name: str, raw_text: Optional[str] = None) -> Optional[str]:
     """
-    Use Gemini (if configured) to validate that a candidate string looks like a real business name.
+    Use Gemini (if configured) to validate/repair a vendor name using all receipt context.
     Returns the name if it passes, otherwise None.
     Falls back to simple heuristics if Gemini is unavailable.
     """
@@ -152,21 +154,28 @@ def validate_vendor_name(name: str) -> Optional[str]:
     global gemini_enabled
     if gemini_client and gemini_enabled:
         try:
+            # Give Gemini full receipt context so it can infer logos/URLs/slogans.
             prompt = (
-                "Decide if the following string is a real business/store name from a receipt. "
-                "Respond with only YES or NO.\n\n"
-                f"Name: {cleaned}"
+                "You are extracting the store/vendor name from a retail receipt OCR. "
+                "Use EVERY clue (logo text, URLs, slogans, addresses, phone numbers, survey links) "
+                "to return the most likely store/chain name a person would recognize. "
+                "Prefer the canonical brand name, even if the OCR vendor field is missing or a slogan. "
+                "Respond with ONLY the store name or NONE if you cannot decide confidently.\n\n"
+                f"Candidate vendor field: {cleaned}\n"
+                f"Full OCR text:\n{raw_text or ''}\n"
             )
             resp = gemini_client.models.generate_content(
-                model="gemini-1.5-flash",
+                model=GEMINI_MODEL,
                 contents=[prompt],
             )
-            answer = (getattr(resp, "text", "") or "").strip().upper()
-            if answer.startswith("YES"):
-                return cleaned
-            return None
+            answer = (getattr(resp, "text", "") or "").strip()
+            # Normalize the response to a single line
+            answer = answer.splitlines()[0].strip()
+            if answer.upper().startswith("NONE") or answer == "":
+                return None
+            return answer
         except Exception as e:
-            print(f"[Gemini Vendor Validation] Error: {e}")
+            print(f"[Gemini Vendor Validation] Error: {e} (model={GEMINI_MODEL})")
             gemini_enabled = False  # disable further calls on failure
 
     # If no Gemini or failure, return the cleaned name

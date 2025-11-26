@@ -6,8 +6,9 @@ from dotenv import load_dotenv
 _here = Path(__file__).resolve()
 _root = _here.parents[2]  # backend/
 _app_dir = _here.parents[1]  # backend/app/
-load_dotenv(_root / ".env")
-load_dotenv(_app_dir / ".env")
+# Force .env values to override any existing environment variables
+load_dotenv(_root / ".env", override=True)
+load_dotenv(_app_dir / ".env", override=True)
 
 # CORS
 _origins_raw = os.getenv("ALLOWED_ORIGINS", "*")

@@ -265,6 +265,8 @@ def _normalize_date(date_str: Optional[str]) -> Optional[str]:
         "%Y-%m-%d",
         "%Y/%m/%d",
         "%Y.%m.%d",
+        "%m/%d/%y",
+        "%m-%d-%y",
         "%b %d, %Y",
         "%B %d, %Y",
         "%m/%d/%Y",
