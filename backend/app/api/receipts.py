@@ -6,6 +6,7 @@ from typing import List, Optional
 from uuid import uuid4
 from decimal import Decimal
 import io
+from datetime import datetime
 
 from app.core.aws import table_receipts, s3_client
 from app.core import config
@@ -35,13 +36,31 @@ class ReceiptOut(BaseModel):
 
 
 @router.get("/", response_model=List[ReceiptOut])
-def list_receipts():
-    """Return all receipts for the demo user."""
+def list_receipts(
+    startDate: Optional[str] = None,
+    endDate: Optional[str] = None,
+):
+    """Return receipts for the demo user, optionally filtered by date."""
     resp = table_receipts.query(
         KeyConditionExpression="userId = :uid",
         ExpressionAttributeValues={":uid": DEMO_USER_ID},
     )
-    return resp.get("Items", [])
+    items = resp.get("Items", [])
+
+    # Normalize and filter by date. When a range is provided, receipts without
+    # a parseable date are excluded to avoid misleading matches.
+    if startDate is not None or endDate is not None:
+        filtered = []
+        for r in items:
+            iso_date = _normalize_date(r.get("date"))
+            if startDate and (iso_date is None or iso_date < startDate):
+                continue
+            if endDate and (iso_date is None or iso_date > endDate):
+                continue
+            filtered.append(r)
+        items = filtered
+
+    return items
 
 
 @router.post("/", response_model=ReceiptOut)
@@ -234,3 +253,30 @@ def get_receipt_image(receipt_id: str):
         ExpiresIn=3600,
     )
     return {"url": presigned}
+def _normalize_date(date_str: Optional[str]) -> Optional[str]:
+    """
+    Normalize various date string formats to ISO YYYY-MM-DD.
+    Returns None if parsing fails.
+    """
+    if not date_str:
+        return None
+    value = str(date_str).strip()
+    formats = [
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%Y.%m.%d",
+        "%b %d, %Y",
+        "%B %d, %Y",
+        "%m/%d/%Y",
+        "%d %b %Y",
+        "%d %B %Y",
+    ]
+    for fmt in formats:
+        try:
+            return datetime.strptime(value, fmt).date().isoformat()
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(value).date().isoformat()
+    except Exception:
+        return None

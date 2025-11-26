@@ -38,7 +38,15 @@ const apiPostJson = (path, payload) =>
   }).then(handleResponse);
 
 // Receipts
-export const fetchReceipts = () => apiGet("/receipts");
+export const fetchReceipts = (params = {}) => {
+  const search = new URLSearchParams();
+  if (params.startDate) search.set("startDate", params.startDate);
+  if (params.endDate) search.set("endDate", params.endDate);
+
+  const query = search.toString();
+  const path = query ? `/receipts?${query}` : "/receipts";
+  return apiGet(path);
+};
 
 export const uploadReceipt = (file, fields = {}) => {
   const formData = new FormData();
@@ -58,7 +66,14 @@ export const buildExportUrl = (params = {}) => {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== "") {
-      search.set(key, value);
+      // Normalize keys to backend params
+      if (key === "start" || key === "startDate") {
+        search.set("startDate", value);
+      } else if (key === "end" || key === "endDate") {
+        search.set("endDate", value);
+      } else {
+        search.set(key, value);
+      }
     }
   });
   url.search = search.toString();

@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   fetchReceipts,
   uploadReceipt,
@@ -9,11 +10,78 @@ import {
 } from "../api/client.js"; // !!!!!! Backend API client
 
 const getDefaultExportDates = () => {
-  const end = new Date();
-  const start = new Date(end.getFullYear(), end.getMonth(), 1);
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0); // last day of month
   return {
-    start: start.toISOString().slice(0, 10),
-    end: end.toISOString().slice(0, 10),
+    startDate: start.toISOString().slice(0, 10),
+    endDate: end.toISOString().slice(0, 10),
+  };
+};
+
+const getYearBoundsFromReceipts = (receipts = []) => {
+  const parseYear = (value) => {
+    if (!value) return null;
+    const raw = String(value).trim();
+    const formats = [
+      "%Y-%m-%d",
+      "%Y/%m/%d",
+      "%Y.%m.%d",
+      "%b %d, %Y",
+      "%B %d, %Y",
+      "%m/%d/%Y",
+      "%d %b %Y",
+      "%d %B %Y",
+    ];
+
+    // Simple manual parse for known formats
+    for (const fmt of formats) {
+      const parts = raw.match(
+        fmt === "%Y-%m-%d"
+          ? /^(\d{4})-(\d{2})-(\d{2})$/
+          : fmt === "%Y\/%m\/%d"
+            ? /^(\d{4})\/(\d{2})\/(\d{2})$/
+            : fmt === "%Y\.\%m\.\%d"
+              ? /^(\d{4})\.(\d{2})\.(\d{2})$/
+              : fmt === "%m/%d/%Y"
+                ? /^(\d{2})\/(\d{2})\/(\d{4})$/
+                : fmt === "%b %d, %Y"
+                  ? /^([A-Za-z]{3}) (\d{1,2}), (\d{4})$/
+                  : fmt === "%B %d, %Y"
+                    ? /^([A-Za-z]+) (\d{1,2}), (\d{4})$/
+                    : fmt === "%d %b %Y"
+                      ? /^(\d{1,2}) ([A-Za-z]{3}) (\d{4})$/
+                      : /^(\d{1,2}) ([A-Za-z]+) (\d{4})$/
+      );
+      if (parts) {
+        const year =
+          fmt === "%m/%d/%Y"
+            ? Number(parts[3])
+            : fmt === "%b %d, %Y" || fmt === "%B %d, %Y"
+              ? Number(parts[3])
+              : fmt === "%d %b %Y" || fmt === "%d %B %Y"
+                ? Number(parts[3])
+                : Number(parts[1]);
+        return Number.isNaN(year) ? null : year;
+      }
+    }
+
+    const d = new Date(raw);
+    return Number.isNaN(d.getTime()) ? null : d.getFullYear();
+  };
+
+  const years = receipts
+    .map((r) => parseYear(r?.date))
+    .filter((y) => y !== null);
+
+  if (!years.length) {
+    const current = new Date().getFullYear();
+    return { minYear: current, maxYear: current };
+  }
+
+  return {
+    minYear: Math.min(...years),
+    maxYear: Math.max(...years),
   };
 };
 
@@ -21,19 +89,25 @@ export default function Dashboard() {
   const [receipts, setReceipts] = useState([]); // [{id,date,vendor,amount,tax,category,card,job,status}]
   const [isDragging, setIsDragging] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
+  const [dateRange, setDateRange] = useState(getDefaultExportDates);
   const [exportDates, setExportDates] = useState(getDefaultExportDates);
+  const [yearBounds, setYearBounds] = useState(() =>
+    getYearBoundsFromReceipts([])
+  );
+  const [boundsLoaded, setBoundsLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(false); // !!!!!! loading state
   const [isUploading, setIsUploading] = useState(false); // !!!!!! upload state
   const [error, setError] = useState(null); // !!!!!! error surface
   const [selectedIds, setSelectedIds] = useState([]); // !!!!!! selection state
   const [confirmDelete, setConfirmDelete] = useState(null); // {type: "selected"|"all"}
   const [viewImage, setViewImage] = useState(null); // {url, vendor, date, error?: bool}
+  const [uploadReport, setUploadReport] = useState(null); // {successCount, failed: [{name, message}]}
 
-  const loadReceipts = useCallback(async () => {
+  const loadReceipts = useCallback(async (range) => {
     setIsLoading(true);
     setError(null);
     try {
-      const data = await fetchReceipts();
+      const data = await fetchReceipts(range || {});
       setReceipts(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error("Failed to load receipts", err);
@@ -44,8 +118,38 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    loadReceipts();
-  }, [loadReceipts]);
+    loadReceipts(dateRange);
+  }, [loadReceipts, dateRange]);
+
+  useEffect(() => {
+    setExportDates(dateRange);
+  }, [dateRange]);
+
+  useEffect(() => {
+    const newBounds = getYearBoundsFromReceipts(receipts);
+    setYearBounds((prev) => ({
+      minYear: Math.min(prev.minYear, newBounds.minYear),
+      maxYear: Math.max(prev.maxYear, newBounds.maxYear),
+    }));
+  }, [receipts]);
+
+  useEffect(() => {
+    let active = true;
+    const loadAllBounds = async () => {
+      try {
+        const data = await fetchReceipts();
+        if (!active) return;
+        setYearBounds(getYearBoundsFromReceipts(Array.isArray(data) ? data : []));
+        setBoundsLoaded(true);
+      } catch (err) {
+        console.error("Failed to load year bounds", err);
+      }
+    };
+    loadAllBounds();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleFiles = useCallback(
     async (files) => {
@@ -53,19 +157,40 @@ export default function Dashboard() {
 
       setIsUploading(true);
       setError(null);
-      try {
-        for (const file of files) {
+      const failed = [];
+      let successCount = 0;
+
+      for (const file of files) {
+        try {
           await uploadReceipt(file);
+          successCount += 1;
+        } catch (err) {
+          console.error("Upload failed for file", file?.name, err);
+          failed.push({
+            name: file?.name || "Unknown file",
+            message: err?.message || "Upload failed",
+          });
         }
-        await loadReceipts();
+      }
+
+      try {
+        if (successCount > 0) {
+          await loadReceipts(dateRange);
+        }
+        if (failed.length) {
+          setUploadReport({ successCount, failed });
+        } else if (successCount > 0) {
+          // Hard refresh to ensure all views reflect new uploads
+          window.location.reload();
+        }
       } catch (err) {
-        console.error("Upload failed", err);
-        setError("Upload failed. Please try again.");
+        console.error("Post-upload handling failed", err);
+        setError("Upload completed with issues. Please refresh and try again.");
       } finally {
         setIsUploading(false);
       }
     },
-    [loadReceipts]
+    [dateRange, loadReceipts]
   );
 
   const handleDrop = (e) => {
@@ -86,8 +211,26 @@ export default function Dashboard() {
   };
 
   const refreshReceipts = async () => {
-    await loadReceipts();
+    await loadReceipts(dateRange);
     setSelectedIds([]);
+  };
+
+  const updateDateRange = (key, value) => {
+    setDateRange((prev) => {
+      const next = { ...prev, [key]: value };
+      if (
+        next.startDate &&
+        next.endDate &&
+        next.startDate > next.endDate
+      ) {
+        if (key === "startDate") {
+          next.endDate = next.startDate;
+        } else {
+          next.startDate = next.endDate;
+        }
+      }
+      return next;
+    });
   };
 
   const onExport = async (type) => {
@@ -128,7 +271,7 @@ export default function Dashboard() {
         await deleteReceipts(selectedIds);
         setSelectedIds([]);
       }
-      await loadReceipts();
+      await loadReceipts(dateRange);
     } catch (err) {
       console.error("Delete failed", err);
       setError("Delete failed. Please try again.");
@@ -143,17 +286,10 @@ export default function Dashboard() {
     const status = (r.status || "").toUpperCase();
     return status.includes("PEND") || status === "UPLOADED";
   }).length;
-  const thisMonthTotal = receipts
-    .filter((r) => {
-      if (!r.date) return false;
-      const d = new Date(r.date);
-      const now = new Date();
-      return (
-        d.getMonth() === now.getMonth() &&
-        d.getFullYear() === now.getFullYear()
-      );
-    })
-    .reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+  const rangeTotalAmount = receipts.reduce(
+    (sum, r) => sum + (Number(r.amount) || 0),
+    0
+  );
 
   const formatAmount = (value) => {
     const num = Number(value);
@@ -219,19 +355,19 @@ export default function Dashboard() {
             <section className="rounded-2xl bg-slate-900/70 border border-slate-800/80 p-4">
               <h2 className="text-sm font-semibold tracking-wide flex items-center gap-2 mb-3">
                 <span className="h-1.5 w-1.5 rounded-full bg-rose-500 shadow-[0_0_10px_rgba(248,113,113,0.7)]" />
-                Quick Stats
+                Quick Stats (Range)
               </h2>
               <div className="space-y-3 text-sm">
                 <StatRow label="Pending" value={pendingCount} />
                 <StatRow
-                  label="This Month"
+                  label="Range Total"
                   value={
-                    thisMonthTotal
-                      ? `$${thisMonthTotal.toFixed(2)}`
+                    rangeTotalAmount
+                      ? `$${rangeTotalAmount.toFixed(2)}`
                       : "$0.00"
                   }
                 />
-                <StatRow label="Total Receipts" value={totalReceipts} />
+                <StatRow label="Receipts" value={totalReceipts} />
               </div>
             </section>
 
@@ -321,10 +457,26 @@ export default function Dashboard() {
 
             {/* Receipts Table Card */}
             <div className="rounded-2xl bg-slate-900/80 border border-slate-800/80 overflow-hidden flex flex-col">
-              <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800/80">
-                <h2 className="text-sm font-semibold flex items-center gap-2">
-                  <span className="text-base">🧾</span> Receipts
-                </h2>
+              <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-slate-800/80">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <h2 className="text-sm font-semibold flex items-center gap-2">
+                    <span className="text-base">🧾</span> Receipts
+                  </h2>
+                  <div className="flex items-center gap-2">
+                    <DatePickerButton
+                      label="Start Date"
+                      value={dateRange.startDate}
+                      yearBounds={yearBounds}
+                      onChange={(val) => updateDateRange("startDate", val)}
+                    />
+                    <DatePickerButton
+                      label="End Date"
+                      value={dateRange.endDate}
+                      yearBounds={yearBounds}
+                      onChange={(val) => updateDateRange("endDate", val)}
+                    />
+                  </div>
+                </div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() =>
@@ -476,11 +628,11 @@ export default function Dashboard() {
                 </label>
                 <input
                   type="date"
-                  value={exportDates.start}
+                  value={exportDates.startDate}
                   onChange={(e) =>
                     setExportDates((prev) => ({
                       ...prev,
-                      start: e.target.value,
+                      startDate: e.target.value,
                     }))
                   }
                   className="w-full rounded-xl bg-slate-800/80 border border-slate-700/80 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -492,11 +644,11 @@ export default function Dashboard() {
                 </label>
                 <input
                   type="date"
-                  value={exportDates.end}
+                  value={exportDates.endDate}
                   onChange={(e) =>
                     setExportDates((prev) => ({
                       ...prev,
-                      end: e.target.value,
+                      endDate: e.target.value,
                     }))
                   }
                   className="w-full rounded-xl bg-slate-800/80 border border-slate-700/80 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -550,6 +702,61 @@ export default function Dashboard() {
                 className="flex-1 rounded-xl bg-slate-800/80 border border-slate-700/80 px-4 py-2.5 text-sm font-semibold text-slate-100 hover:bg-slate-700/80 transition"
               >
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* UPLOAD REPORT MODAL */}
+      {uploadReport && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 px-4">
+          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800/80 shadow-2xl p-6 relative">
+            <button
+              onClick={() => {
+                setUploadReport(null);
+                setError(null);
+              }}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-100"
+            >
+              ✕
+            </button>
+            <h2 className="text-lg font-semibold mb-2 text-white">Upload Summary</h2>
+            <p className="text-sm text-slate-300 mb-4">
+              {uploadReport.successCount} uploaded successfully, {uploadReport.failed.length} failed.
+            </p>
+            {uploadReport.failed.length > 0 && (
+              <div className="space-y-2 mb-4">
+                <div className="text-xs uppercase text-slate-400">Failed files</div>
+                <div className="max-h-40 overflow-y-auto space-y-2">
+                  {uploadReport.failed.map((f, idx) => (
+                    <div
+                      key={`${f.name}-${idx}`}
+                      className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-100"
+                    >
+                      <div className="font-semibold">{f.name}</div>
+                      <div className="text-rose-200/90">{f.message}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  setUploadReport(null);
+                  setError(null);
+                  refreshReceipts();
+                }}
+                className="flex-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 transition"
+              >
+                OK
+              </button>
+              <button
+                onClick={() => window.location.reload()}
+                className="flex-1 rounded-xl bg-slate-800/80 border border-slate-700/80 px-4 py-2.5 text-sm font-semibold text-slate-100 hover:bg-slate-700/80 transition"
+              >
+                Refresh Page
               </button>
             </div>
           </div>
@@ -629,5 +836,240 @@ function Td({ children, className = "" }) {
     <td className={`px-4 py-2 text-slate-200 text-xs align-middle ${className}`}>
       {children}
     </td>
+  );
+}
+
+function DatePickerButton({ label, value, onChange, yearBounds }) {
+  const [open, setOpen] = useState(false);
+  const [activeYear, setActiveYear] = useState(() => {
+    const d = value ? new Date(value) : new Date();
+    return Number.isNaN(d.getTime()) ? new Date().getFullYear() : d.getFullYear();
+  });
+  const [activeMonth, setActiveMonth] = useState(() => {
+    const d = value ? new Date(value) : new Date();
+    return Number.isNaN(d.getTime()) ? new Date().getMonth() : d.getMonth();
+  });
+  const buttonRef = useRef(null);
+  const popoverRef = useRef(null);
+  const [popoverPos, setPopoverPos] = useState({ top: 0, left: 0 });
+
+  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const dayLabels = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+  const selectedDate = value ? new Date(value) : null;
+  const nowYear = new Date().getFullYear();
+
+  useEffect(() => {
+    const updatePos = () => {
+      if (!buttonRef.current) return;
+      const rect = buttonRef.current.getBoundingClientRect();
+      const popHeight = popoverRef.current?.offsetHeight || 0;
+      const above = rect.top + window.scrollY - popHeight - 8;
+      const below = rect.bottom + window.scrollY + 8;
+      const top = popHeight ? Math.max(8, above) : below;
+      setPopoverPos({
+        top,
+        left: rect.left + window.scrollX,
+      });
+    };
+    if (open) {
+      updatePos();
+      window.addEventListener("resize", updatePos);
+      window.addEventListener("scroll", updatePos, true);
+    }
+    return () => {
+      window.removeEventListener("resize", updatePos);
+      window.removeEventListener("scroll", updatePos, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const id = requestAnimationFrame(() => {
+      if (!buttonRef.current) return;
+      const rect = buttonRef.current.getBoundingClientRect();
+      const popHeight = popoverRef.current?.offsetHeight || 0;
+      const above = rect.top + window.scrollY - popHeight - 8;
+      const below = rect.bottom + window.scrollY + 8;
+      setPopoverPos({
+        top: popHeight ? Math.max(8, above) : below,
+        left: rect.left + window.scrollX,
+      });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const d = value ? new Date(value) : new Date();
+    if (!Number.isNaN(d.getTime())) {
+      setActiveYear(d.getFullYear());
+      setActiveMonth(d.getMonth());
+    }
+  }, [open, value]);
+
+  const yearOptions = () => {
+    const min = yearBounds?.minYear ?? nowYear;
+    const max = yearBounds?.maxYear ?? nowYear;
+    const startYear = Math.min(min, activeYear);
+    const endYear = Math.max(max, activeYear);
+    const years = [];
+    for (let y = endYear; y >= startYear; y -= 1) {
+      years.push(y);
+    }
+    return years;
+  };
+
+  const daysInMonth = new Date(activeYear, activeMonth + 1, 0).getDate();
+  const firstDay = new Date(activeYear, activeMonth, 1).getDay();
+  const calendarCells = Array.from({ length: firstDay + daysInMonth }, (_, idx) =>
+    idx < firstDay ? null : idx - firstDay + 1
+  );
+
+  const formatDateParts = (year, monthIndex, day) =>
+    `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+  const isSelectedDay = (day) => {
+    if (!selectedDate || !day) return false;
+    return (
+      selectedDate.getFullYear() === activeYear &&
+      selectedDate.getMonth() === activeMonth &&
+      selectedDate.getDate() === day
+    );
+  };
+
+  const isToday = (day) => {
+    if (!day) return false;
+    const today = new Date();
+    return (
+      today.getFullYear() === activeYear &&
+      today.getMonth() === activeMonth &&
+      today.getDate() === day
+    );
+  };
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        onClick={() => setOpen((prev) => !prev)}
+        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition ${
+          open
+            ? "border-indigo-500/70 bg-indigo-500/10 text-indigo-100"
+            : "border-slate-700/70 bg-slate-800/60 text-slate-200 hover:bg-slate-700/80"
+        }`}
+      >
+        <div className="text-left">
+          <div className="text-[11px] uppercase tracking-wide text-slate-300">{label}</div>
+          <div className="font-semibold text-[12px]">
+            {value || "Pick date"}
+          </div>
+        </div>
+      </button>
+
+      {open &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-40"
+            onMouseDown={(e) => {
+              if (
+                popoverRef.current &&
+                !popoverRef.current.contains(e.target) &&
+                buttonRef.current &&
+                !buttonRef.current.contains(e.target)
+              ) {
+                setOpen(false);
+              }
+            }}
+          >
+            <div
+              ref={popoverRef}
+              className="absolute w-72 max-h-[26rem] overflow-y-auto rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl"
+              style={{ top: popoverPos.top, left: popoverPos.left }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className="p-3 space-y-3">
+                <div>
+                  <div className="text-[11px] uppercase text-slate-400 mb-1">Year</div>
+                  <div className="max-h-28 overflow-y-auto rounded-xl border border-slate-800 bg-slate-800/60">
+                    {yearOptions().map((year) => (
+                      <button
+                        key={year}
+                        onClick={() => setActiveYear(year)}
+                        className={`w-full text-left px-3 py-2 text-sm transition ${
+                          year === activeYear
+                            ? "bg-indigo-600/70 text-white"
+                            : "text-slate-200 hover:bg-slate-700/60"
+                        }`}
+                      >
+                        {year}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-[11px] uppercase text-slate-400 mb-1">Month</div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {monthNames.map((month, idx) => (
+                      <button
+                        key={month}
+                        onClick={() => setActiveMonth(idx)}
+                        className={`rounded-lg px-2.5 py-1.5 text-sm transition ${
+                          idx === activeMonth
+                            ? "bg-indigo-600/70 text-white"
+                            : "bg-slate-800/70 text-slate-200 hover:bg-slate-700/80"
+                        }`}
+                      >
+                        {month}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between text-[11px] uppercase text-slate-400 mb-2">
+                    <span>Day</span>
+                    <span className="text-slate-500">
+                      {monthNames[activeMonth]} {activeYear}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-7 gap-1 text-[11px] text-slate-500 mb-1">
+                    {dayLabels.map((d) => (
+                      <div key={d} className="text-center">
+                        {d}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-7 gap-1">
+                    {calendarCells.map((day, idx) =>
+                      day ? (
+                        <button
+                          key={day}
+                          onClick={() => {
+                            onChange(formatDateParts(activeYear, activeMonth, day));
+                            setOpen(false);
+                          }}
+                          className={`h-8 rounded-lg text-sm transition ${
+                            isSelectedDay(day)
+                              ? "bg-indigo-600 text-white"
+                              : isToday(day)
+                                ? "border border-indigo-500/60 text-indigo-100"
+                                : "bg-slate-800/70 text-slate-100 hover:bg-slate-700/80"
+                          }`}
+                        >
+                          {day}
+                        </button>
+                      ) : (
+                        <div key={`blank-${idx}`} className="h-8" />
+                      )
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+    </div>
   );
 }
